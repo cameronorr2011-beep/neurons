@@ -176,19 +176,27 @@ def effective_default_model(pid: str, prov: dict) -> str:
     cached model in that case.
     """
     configured = str(prov.get("model") or "")
-    with _models_lock:
+    if pid == "numes" and configured and not configured.endswith(":free"):
+        configured = DEFAULT_PROVIDER_MODELS["numes"]
+    # Called once during module import, before the catalogue cache is defined.
+    lock = globals().get("_models_lock")
+    if lock is None:
+        return configured
+    with lock:
         entry = _MODELS_CACHE.get(pid)
     if not entry:
         return configured
     ids = [m.get("id") for m in entry["data"].get("data", []) if m.get("id")]
     if not ids:
         return configured
-    if configured in ids:
-        return configured
     if pid == "numes":
         free = [model_id for model_id in ids if str(model_id).endswith(":free")]
+        if configured in free:
+            return configured
         if free:
             return free[0]
+    if configured in ids:
+        return configured
     return ids[0]
 
 
@@ -196,7 +204,7 @@ DEFAULT_PROVIDER = default_provider_id()
 _DEFAULT_PROV = provider_defs().get(DEFAULT_PROVIDER) or {}
 API_KEY = _DEFAULT_PROV.get("key", "")
 BASE_URL = _DEFAULT_PROV.get("base", "")
-DEFAULT_MODEL = _DEFAULT_PROV.get("model", DEFAULT_PROVIDER_MODELS["logfare"])
+DEFAULT_MODEL = effective_default_model(DEFAULT_PROVIDER, _DEFAULT_PROV)
 
 SYSTEM_PROMPT = (
     "You are Neurons, an agent running on the user's own computer with full access to it. "

@@ -108,6 +108,9 @@ header { flex-wrap: wrap; position: sticky; top: 0; z-index: 10; }
 }
 .toast[hidden] { display: none; }
 .toast.bad { background: #7f1d1d; color: #fecaca; }
+.retry-row { margin-top: 8px; }
+.retry { background: transparent; color: var(--accent); border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; }
+.retry:hover { border-color: var(--accent); }
 
 html[data-theme="paper"] {
   --bg: #f6f4ee; --panel: #fffdf8; --line: #ded9cc; --text: #202329;

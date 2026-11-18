@@ -198,6 +198,28 @@ function pumpQueue() {
   setTimeout(() => runPrompt(next.text), 0);
 }
 
+function friendlyError(error) {
+  const raw = String(error || '');
+  if (/Failed to fetch|NetworkError|Load failed|ERR_CONNECTION|fetch failed/i.test(raw)) {
+    return 'network error — provider connection dropped. Retry.';
+  }
+  return raw;
+}
+
+function addRetry(bubble, text) {
+  const row = el('div', 'retry-row');
+  const button = el('button', 'retry', 'retry');
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    if (busy) return;
+    button.disabled = true;
+    input.value = text;
+    submitPrompt();
+  });
+  row.appendChild(button);
+  bubble.appendChild(row);
+}
+
 function finishPrompt() {
   busy = false;
   sendBtn.disabled = false;
@@ -281,7 +303,7 @@ async function runPrompt(text) {
   // Never hang forever on a queued/throttled provider.
   const ctrl = new AbortController();
   activeCtrl = ctrl;
-  const hardStop = setTimeout(() => ctrl.abort(), agentOn ? 1860000 : 120000);
+  const hardStop = setTimeout(() => ctrl.abort(), agentOn ? 1860000 : 300000);
 
   const sink = {
     content: '', reasoning: '', model: '', error: '', done: false, step: 0,
@@ -349,6 +371,14 @@ async function runPrompt(text) {
           trace += '↻ ' + (d.message || 'pushing the model to act') + nl;
           summary.textContent = 'pushing for action…';
           renderTrace();
+        } else if (d.type === 'retry') {
+          trace += '↻ ' + (d.reason || 'provider hiccup') + ' — retrying (' +
+            (d.attempt || 1) + '/' + (d.max || 3) + ')' + nl;
+          summary.textContent = 'retrying provider…';
+          renderTrace();
+        } else if (d.type === 'warning') {
+          trace += '⚠ ' + (d.message || 'provider warning') + nl;
+          renderTrace();
         } else if (d.type === 'fallback') {
           sink.fallback = '  ·  fell back from ' + labelFor(d.from);
           sink.provider = d.to;
@@ -400,7 +430,7 @@ async function runPrompt(text) {
     } catch (e) {
       sink.error = (e && e.name === 'AbortError')
         ? (stopRequested ? 'stopped by you' : 'timed out after 31 minutes')
-        : String(e);
+        : friendlyError(e);
     } finally {
       clearTimeout(hardStop);
     }
@@ -410,6 +440,7 @@ async function runPrompt(text) {
     if (sink.error) {
       if (!sink.content) bubble.textContent = sink.error;
       bubble.style.color = '#f87171';
+      addRetry(bubble, text);
       trace += (trace ? nl : '') + '[error] ' + sink.error;
       renderTrace();
     } else {
@@ -435,7 +466,10 @@ async function runPrompt(text) {
       body: JSON.stringify({ provider: providerSel.value, model: modelSel.value, messages: history }),
       signal: ctrl.signal
     });
-    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    if (!res.ok || !res.body) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || ('HTTP ' + res.status));
+    }
     sink.provider = res.headers.get('X-Neurons-Provider') || providerSel.value;
 
     const reader = res.body.getReader();
@@ -455,8 +489,8 @@ async function runPrompt(text) {
     if (buf.trim()) handleFrame(buf, sink);
   } catch (e) {
     sink.error = (e && e.name === 'AbortError')
-      ? (stopRequested ? 'stopped by you' : 'timed out after 120s — Logfare may be queueing; try again or pick another model')
-      : String(e);
+      ? (stopRequested ? 'stopped by you' : 'timed out after 5 minutes — the provider may be queueing; retry or switch models')
+      : friendlyError(e);
   } finally {
     clearTimeout(hardStop);
   }
@@ -465,6 +499,7 @@ async function runPrompt(text) {
   if (sink.error) {
     bubble.textContent = sink.error;
     bubble.style.color = '#f87171';
+    addRetry(bubble, text);
   } else {
     const reply = sink.content || sink.reasoning;
     history.push({ role: 'assistant', content: reply });

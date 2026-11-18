@@ -18,6 +18,8 @@ The API key stays on the server. The browser never receives it.
   a browser restart. Delete individual chats from the sidebar.
 - **Switchable UI** — `graphite`, `paper` and `terminal` themes. The choice is
   stored locally and on the server profile.
+- **Resilient streams** — transient provider failures retry automatically, an
+  empty `finish` gets a final prose pass, and failed bubbles offer **retry**.
 - **Agent workspace** — files, shell, web, desktop control, skills, MCP servers,
   subagents and tool traces. Agent mode is on by default.
 - **Queue controls** and stop/cancel from the existing harness.
@@ -90,6 +92,19 @@ and duplicate facts are collapsed case-insensitively.
 
 Memory is not a replacement for reading the actual files or checking a command
 result. The agent is still instructed to verify facts before reporting them.
+
+## Provider reliability
+
+Agent requests retry transient connection drops, timeouts, rate limits and
+5xx responses up to three times. If a provider fails before any tool runs, the
+fallback provider is tried. If tools already ran and the provider then drops,
+Neurons shows the last completed tool result rather than re-running side
+effects.
+
+When a model calls `finish` with an empty answer twice, Neurons makes one final
+request with tools removed and asks for plain prose. The UI also adds a
+**retry** button to a failed bubble. This avoids the old dead-end outcome where
+a task had completed but the chat showed only a network error.
 
 ## UI
 

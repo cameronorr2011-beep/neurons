@@ -168,6 +168,30 @@ def ensure_model(pid: str, prov: dict, model: str) -> str:
     return model
 
 
+def effective_default_model(pid: str, prov: dict) -> str:
+    """Use the configured default only when the cached catalogue accepts it.
+
+    Numes configs often name a paid model while the UI only lists free models;
+    selecting that stale default caused request failures. Prefer the first free
+    cached model in that case.
+    """
+    configured = str(prov.get("model") or "")
+    with _models_lock:
+        entry = _MODELS_CACHE.get(pid)
+    if not entry:
+        return configured
+    ids = [m.get("id") for m in entry["data"].get("data", []) if m.get("id")]
+    if not ids:
+        return configured
+    if configured in ids:
+        return configured
+    if pid == "numes":
+        free = [model_id for model_id in ids if str(model_id).endswith(":free")]
+        if free:
+            return free[0]
+    return ids[0]
+
+
 DEFAULT_PROVIDER = default_provider_id()
 _DEFAULT_PROV = provider_defs().get(DEFAULT_PROVIDER) or {}
 API_KEY = _DEFAULT_PROV.get("key", "")
@@ -1613,6 +1637,37 @@ def _answer_or_fallback(text: str, steps: list) -> str:
     return "(the model ended without a written answer — try again or switch models)"
 
 
+def _is_transient_error(exc: Exception) -> bool:
+    """Network drops, timeouts, rate limits and provider 5xx are retryable."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    try:
+        if int(status) in {408, 409, 425, 429, 500, 502, 503, 504}:
+            return True
+    except (TypeError, ValueError):
+        pass
+    name = type(exc).__name__.lower()
+    if any(part in name for part in (
+        "apiconnection", "apitimeout", "connection", "timeout", "ratelimit",
+        "internalserver", "serviceunavailable", "remoteprotocol", "readerror", "network",
+    )):
+        return True
+    return isinstance(exc, (TimeoutError, ConnectionError))
+
+
+def _final_completion(client, model_id: str, convo: list) -> tuple[str, str]:
+    """Ask for prose without tools when the model keeps returning an empty finish."""
+    ask = list(convo)
+    ask.append({"role": "user", "content": (
+        "Write the final answer now as plain text for the user. Do not call tools. "
+        "Include what you did, what you found, and anything still unresolved. Be concise."
+    )})
+    resp = client.chat.completions.create(model=model_id, messages=ask, max_tokens=900)
+    message = resp.choices[0].message
+    return (getattr(message, "content", "") or "").strip(), getattr(resp, "model", model_id)
+
+
 def _sse_event(event: dict) -> bytes:
     return f"data: {json.dumps(event)}\n\n".encode()
 
@@ -1626,7 +1681,7 @@ def agent_stream(messages: list, model: str | None = None, max_steps: int = 40,
     commits to an SSE response.
     """
     pid, prov = resolve_provider(provider)
-    model = ensure_model(pid, prov, model or prov["model"])
+    model = ensure_model(pid, prov, model or effective_default_model(pid, prov))
     return _iter_agent(personalized_messages(messages), pid, prov, model, max_steps, max_seconds)
 
 
@@ -1651,45 +1706,59 @@ def _iter_agent(messages, pid, prov, model, max_steps, max_seconds):
                 yield {"type": "done", "text": "(stopped: 30-minute agent budget exhausted)",
                        "model": resp_model, "provider": active_pid, "steps": steps}
                 return
-            stream = client.chat.completions.create(
-                model=model_id, messages=convo,
-                tools=TOOLS + mcp_tool_schemas() + [FINISH_TOOL],
-                tool_choice="required", max_tokens=1200, stream=True,
-            )
+            resp_model = model_id
             reasoning, content = "", ""
             calls: dict = {}
-            for chunk in stream:
-                if getattr(chunk, "model", None):
-                    resp_model = chunk.model
-                if not getattr(chunk, "choices", None):
-                    continue
-                delta = chunk.choices[0].delta
-                # Unknown fields (numes "reasoning", logfare "reasoning_content")
-                # live in extras; model_dump() is the portable way to see them.
-                fields = delta.model_dump() if hasattr(delta, "model_dump") else {}
-                reason = (fields.get("reasoning") or fields.get("reasoning_content")
-                          or fields.get("thinking") or "")
-                if reason:
-                    state["output"] = True
-                    reasoning += reason
-                    yield {"type": "reasoning", "delta": reason, "step": step}
-                if fields.get("content"):
-                    state["output"] = True
-                    content += fields["content"]
-                    yield {"type": "content", "delta": fields["content"], "step": step}
-                for tc in fields.get("tool_calls") or []:
-                    if not tc:
-                        continue
-                    state["output"] = True
-                    idx = tc.get("index") or 0
-                    slot = calls.setdefault(idx, {"id": "", "name": "", "args": ""})
-                    if tc.get("id"):
-                        slot["id"] = tc["id"]
-                    fn = tc.get("function") or {}
-                    if fn.get("name"):
-                        slot["name"] += fn["name"]
-                    if fn.get("arguments"):
-                        slot["args"] += fn["arguments"]
+            for request_try in range(1, 4):
+                resp_model = model_id
+                reasoning, content = "", ""
+                calls = {}
+                try:
+                    stream = client.chat.completions.create(
+                        model=model_id, messages=convo,
+                        tools=TOOLS + mcp_tool_schemas() + [FINISH_TOOL],
+                        tool_choice="required", max_tokens=1200, stream=True,
+                    )
+                    for chunk in stream:
+                        if getattr(chunk, "model", None):
+                            resp_model = chunk.model
+                        if not getattr(chunk, "choices", None):
+                            continue
+                        delta = chunk.choices[0].delta
+                        # Unknown fields (numes "reasoning", logfare "reasoning_content")
+                        # live in extras; model_dump() is the portable way to see them.
+                        fields = delta.model_dump() if hasattr(delta, "model_dump") else {}
+                        reason = (fields.get("reasoning") or fields.get("reasoning_content")
+                                  or fields.get("thinking") or "")
+                        if reason:
+                            state["output"] = True
+                            reasoning += reason
+                            yield {"type": "reasoning", "delta": reason, "step": step}
+                        if fields.get("content"):
+                            state["output"] = True
+                            content += fields["content"]
+                            yield {"type": "content", "delta": fields["content"], "step": step}
+                        for tc in fields.get("tool_calls") or []:
+                            if not tc:
+                                continue
+                            state["output"] = True
+                            idx = tc.get("index") or 0
+                            slot = calls.setdefault(idx, {"id": "", "name": "", "args": ""})
+                            if tc.get("id"):
+                                slot["id"] = tc["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                slot["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                slot["args"] += fn["arguments"]
+                    break
+                except Exception as exc:
+                    if request_try >= 3 or not _is_transient_error(exc) or time.monotonic() >= deadline:
+                        raise
+                    delay = min(2 ** (request_try - 1), 5)
+                    yield {"type": "retry", "attempt": request_try, "max": 3,
+                           "reason": str(exc)[:160], "delay": delay}
+                    time.sleep(delay)
 
             if not calls:
                 latest = ""
@@ -1710,8 +1779,15 @@ def _iter_agent(messages, pid, prov, model, max_steps, max_seconds):
                     )})
                     yield {"type": "nudge", "message": "no tool call — pushing the model to act"}
                     continue
-                yield {"type": "done", "text": _answer_or_fallback(content, steps),
-                       "model": resp_model, "provider": active_pid, "steps": steps}
+                final_text = content.strip()
+                final_model = resp_model
+                if not final_text:
+                    try:
+                        final_text, final_model = _final_completion(client, model_id, convo)
+                    except Exception:
+                        final_text = ""
+                yield {"type": "done", "text": _answer_or_fallback(final_text, steps),
+                       "model": final_model, "provider": active_pid, "steps": steps}
                 return
 
             ordered = [calls[i] for i in sorted(calls)]
@@ -1731,27 +1807,38 @@ def _iter_agent(messages, pid, prov, model, max_steps, max_seconds):
                     args = {}
                 if name == "finish":
                     answer = str(args.get("answer") or content or "").strip()
-                    if not answer and empty_finishes < 2:
-                        empty_finishes += 1
+                    if not answer:
                         # Calls before this one already have real tool replies;
                         # replying again would make the next request malformed.
                         for j, pending in enumerate(ordered[i:], start=i):
                             convo.append({
                                 "role": "tool",
                                 "tool_call_id": pending["id"] or f"call_{step}_{j}",
-                                "content": ("Finish rejected: the answer was empty. Write the final answer now."
+                                "content": ("Finish rejected: the answer was empty."
                                             if pending is call else
                                             "Not run because the finish call was rejected."),
                             })
-                        convo.append({"role": "user", "content": (
-                            "Your finish call had an empty answer. Write the final answer now: "
-                            "what you did, what you found, and anything still unresolved. "
-                            "Do not call finish with an empty answer."
-                        )})
-                        yield {"type": "nudge", "message": "empty finish — asking for the final answer"}
-                        empty_finish = True
-                        break
-                    yield {"type": "done", "text": _answer_or_fallback(answer, steps),
+                        if empty_finishes < 2:
+                            empty_finishes += 1
+                            convo.append({"role": "user", "content": (
+                                "Your finish call had an empty answer. Write the final answer now: "
+                                "what you did, what you found, and anything still unresolved. "
+                                "Do not call finish with an empty answer."
+                            )})
+                            yield {"type": "nudge", "message": "empty finish — asking for the final answer"}
+                            empty_finish = True
+                            break
+                        # Tool mode is clearly not producing prose. Ask once more
+                        # with tools removed; this is the path that prevents a
+                        # finished task from ending in a blank/error bubble.
+                        try:
+                            final_text, final_model = _final_completion(client, model_id, convo)
+                        except Exception:
+                            final_text, final_model = "", resp_model
+                        yield {"type": "done", "text": _answer_or_fallback(final_text, steps),
+                               "model": final_model, "provider": active_pid, "steps": steps}
+                        return
+                    yield {"type": "done", "text": answer,
                            "model": resp_model, "provider": active_pid, "steps": steps}
                     return
                 yield {"type": "tool", "tool": name, "args": args, "step": step}
@@ -1787,19 +1874,25 @@ def _iter_agent(messages, pid, prov, model, max_steps, max_seconds):
     try:
         yield from attempt(prov, pid, model)
     except Exception as exc:
-        if steps or state["output"]:
-            yield {"type": "error", "error": str(exc)[:300]}
+        print(f"agent error ({pid}): {type(exc).__name__}: {str(exc)[:240]}", flush=True)
+        if steps:
+            # Tools already ran. Never re-run them on a fallback; show the last
+            # completed result instead of a bare network error.
+            yield {"type": "warning", "message": f"provider dropped after tools: {str(exc)[:160]}"}
+            yield {"type": "done", "text": _answer_or_fallback("", steps) + "\n\n"
+                   "(Provider connection dropped after the tools ran; this is the last completed result.)",
+                   "model": model, "provider": pid, "steps": steps}
             return
         fb = fallback_provider_id(pid)
         if not fb:
-            yield {"type": "error", "error": str(exc)[:300]}
+            yield {"type": "error", "error": "network/provider error: " + str(exc)[:220]}
             return
         fb_prov = provider_defs()[fb]
         yield {"type": "fallback", "from": pid, "to": fb, "reason": str(exc)[:160]}
         try:
             yield from attempt(fb_prov, fb, fb_prov["model"])
         except Exception as exc2:
-            yield {"type": "error", "error": str(exc2)[:300]}
+            yield {"type": "error", "error": "network/provider error: " + str(exc2)[:220]}
 
 
 def run_agent(messages: list, model: str | None = None, max_steps: int = 40,
@@ -1885,7 +1978,7 @@ def run_agent(messages: list, model: str | None = None, max_steps: int = 40,
                 "model": (resp.model if resp else model_id)}
 
     pid, prov = resolve_provider(provider)
-    model = ensure_model(pid, prov, model or prov["model"])
+    model = ensure_model(pid, prov, model or effective_default_model(pid, prov))
     try:
         result = attempt(prov, model)
         return {**result, "provider": pid}
@@ -2110,7 +2203,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/providers"):
             self._json(200, {
                 "providers": [
-                    {"id": pid, "label": p["label"], "base_url": p["base"], "model": p["model"]}
+                    {"id": pid, "label": p["label"], "base_url": p["base"],
+                     "model": effective_default_model(pid, p)}
                     for pid, p in provider_defs().items()
                 ],
                 "default": default_provider_id(),
@@ -2188,7 +2282,7 @@ class Handler(BaseHTTPRequestHandler):
             ]
             self._json(200, {
                 "data": models,
-                "default_model": prov["model"],
+                "default_model": effective_default_model(pid, prov),
                 "provider": pid,
                 "provider_label": prov["label"],
                 "cached": True,
@@ -2296,28 +2390,67 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
-        model = payload.get("model") or used["model"]
+        model = payload.get("model") or effective_default_model(used_id, used)
         try:
             model = ensure_model(used_id, used, model)
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
-        body = json.dumps({
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "max_tokens": 1500,
-        }).encode()
 
-        req = urllib.request.Request(
-            used["base"] + "/chat/completions",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {used['key']}",
-            },
-            method="POST",
-        )
+        def open_chat(pid: str, prov: dict, model_id: str):
+            body = json.dumps({
+                "model": model_id,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": 1500,
+            }).encode()
+            req = urllib.request.Request(
+                prov["base"] + "/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {prov['key']}",
+                },
+                method="POST",
+            )
+            return urllib.request.urlopen(req, timeout=240)
+
+        upstream = None
+        upstream_error = None
+        for request_try in range(1, 4):
+            try:
+                upstream = open_chat(used_id, used, model)
+                break
+            except urllib.error.HTTPError as exc:
+                upstream_error = exc
+                if exc.code not in {408, 409, 425, 429, 500, 502, 503, 504} or request_try == 3:
+                    break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                upstream_error = exc
+                if request_try == 3:
+                    break
+            except Exception as exc:
+                upstream_error = exc
+                break
+            time.sleep(min(2 ** (request_try - 1), 5))
+
+        used_fallback = False
+        if upstream is None:
+            fb = fallback_provider_id(used_id)
+            if fb:
+                fb_prov = provider_defs()[fb]
+                try:
+                    fb_model = ensure_model(fb, fb_prov, effective_default_model(fb, fb_prov))
+                    upstream = open_chat(fb, fb_prov, fb_model)
+                    used_id, used, model = fb, fb_prov, fb_model
+                    used_fallback = True
+                except Exception as exc:
+                    upstream_error = exc
+
+        if upstream is None:
+            detail = str(upstream_error or "unknown provider error")[:300]
+            self._json(502, {"error": "provider connection failed: " + detail})
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -2326,11 +2459,13 @@ class Handler(BaseHTTPRequestHandler):
         # client waits for EOF forever after the last frame (or an error).
         self.send_header("Connection", "close")
         self.send_header("X-Neurons-Provider", used_id)
+        if used_fallback:
+            self.send_header("X-Neurons-Fallback", used_id)
         self.end_headers()
         self.close_connection = True
 
         try:
-            with urllib.request.urlopen(req, timeout=240) as resp:
+            with upstream as resp:
                 for raw in resp:
                     if not raw.strip():
                         continue
@@ -2345,7 +2480,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(frame.encode())
             self.wfile.flush()
         except Exception as exc:
-            frame = f"data: {json.dumps({'error': str(exc)[:300]})}\n\n"
+            print(f"chat stream error ({used_id}): {type(exc).__name__}: {str(exc)[:240]}", flush=True)
+            frame = f"data: {json.dumps({'error': 'network/provider error: ' + str(exc)[:300]})}\n\n"
             try:
                 self.wfile.write(frame.encode())
                 self.wfile.flush()

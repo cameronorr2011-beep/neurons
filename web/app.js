@@ -220,6 +220,9 @@ function addRetry(bubble, text) {
   bubble.appendChild(row);
 }
 
+window.addRetry = addRetry;
+window.friendlyError = friendlyError;
+
 function finishPrompt() {
   busy = false;
   sendBtn.disabled = false;

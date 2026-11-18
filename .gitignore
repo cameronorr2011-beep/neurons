@@ -6,6 +6,7 @@ venv/
 .env.*
 !.env.example
 data/
+.agents/
 *.db
 *.db-wal
 *.db-shm

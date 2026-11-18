@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en" data-theme="graphite">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neurons</title>
+<link rel="stylesheet" href="/assets/styles.css">
+<link rel="stylesheet" href="/assets/app-extra.css">
+</head>
+<body>
+<aside id="sidebar" aria-label="Chats">
+  <div class="brand">
+    <span class="mark">N</span>
+    <div>
+      <strong>Neurons</strong>
+      <span id="brandSub">local agent</span>
+    </div>
+  </div>
+  <button id="newchat" class="new-chat">+ new chat</button>
+  <div class="side-label">chats</div>
+  <div id="convos" class="convos"></div>
+  <div class="side-foot">
+    <button id="personalbtn" class="side-button"><span id="avatar">N</span> memory &amp; profile</button>
+    <div class="side-meta">local-first · <span id="dbStatus">sqlite</span></div>
+  </div>
+</aside>
+
+<header>
+  <button id="menuBtn" class="icon-btn" title="toggle chats" aria-label="toggle chats">☰</button>
+  <span class="dot"></span>
+  <h1>Neurons</h1>
+  <span class="status" id="status">loading models…</span>
+  <span class="spacer"></span>
+  <select id="themeSel" title="switch UI theme" aria-label="UI theme">
+    <option value="graphite">graphite</option>
+    <option value="paper">paper</option>
+    <option value="terminal">terminal</option>
+  </select>
+  <button id="kinstall" class="chip" title="Download every skill from the public catalog into .agents/skills">download skills</button>
+  <button id="toolkit" class="chip" title="MCP servers, skills and every tool — run any of them yourself">toolkit <span id="kcount" class="badge"></span></button>
+  <button id="agent" class="chip" title="let the model use your PC: files, shell, screen, mouse and keyboard">agent</button>
+  <select id="provider" title="inference provider"><option value="" disabled>provider…</option></select>
+  <select id="model" title="model"><option value="" disabled>loading models…</option></select>
+</header>
+
+<main id="main">
+  <div class="wrap" id="thread">
+    <section id="welcome" class="welcome">
+      <div class="eyebrow">your local agent</div>
+      <h2 id="welcomeTitle">What are we building?</h2>
+      <p id="welcomeLead">Neurons can read files, run commands, browse, and drive this machine. It remembers what you tell it.</p>
+      <div class="suggestions">
+        <button class="suggestion" data-prompt="Inspect this workspace and tell me what I should work on next.">inspect the workspace</button>
+        <button class="suggestion" data-prompt="Remember that I prefer concise, direct answers with no filler.">set a preference</button>
+        <button class="suggestion" data-prompt="Run a quick system check and report what this machine is doing.">check this machine</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Ask anything…  (Enter to send, Shift+Enter for a newline)"></textarea>
+    <button id="send">Send</button>
+    <button id="stop" class="chip" hidden>stop</button>
+  </div>
+  <div class="hint">Plain chat streams the model's reasoning live. Agent mode streams every step, tool call and result, plus raw reasoning whenever the provider exposes it alongside tools.</div>
+  <div class="hint" id="queueInfo"></div>
+  <div class="queue-list" id="queueList" hidden></div>
+</footer>
+
+<aside id="drawer" aria-hidden="true" aria-label="Toolkit">
+  <div class="drawer-head">
+    <strong>Toolkit</strong>
+    <input id="ksearch" placeholder="filter tools, servers, skills…">
+    <button id="kclose" class="chip">close</button>
+  </div>
+  <div class="tabs" id="ktabs"></div>
+  <div class="drawer-body" id="kbody"><div class="empty">loading…</div></div>
+</aside>
+
+<aside id="personal" aria-hidden="true" aria-label="Memory and profile">
+  <div class="drawer-head">
+    <strong>You</strong>
+    <span class="spacer"></span>
+    <button id="personalclose" class="chip">close</button>
+  </div>
+  <div class="personal-body">
+    <section class="personal-section">
+      <h3>Profile</h3>
+      <p class="section-note">This is injected into every conversation, so Neurons talks to you, not a generic user.</p>
+      <label class="field">Name
+        <input id="pname" autocomplete="name" placeholder="What should it call you?">
+      </label>
+      <label class="field">About you
+        <textarea id="pabout" rows="3" placeholder="Projects, preferences, how you work…"></textarea>
+      </label>
+      <label class="field">Response style
+        <select id="pstyle">
+          <option value="concise">concise</option>
+          <option value="balanced">balanced</option>
+          <option value="detailed">detailed</option>
+          <option value="direct">direct</option>
+        </select>
+      </label>
+      <label class="field">UI theme
+        <select id="ptheme">
+          <option value="graphite">graphite</option>
+          <option value="paper">paper</option>
+          <option value="terminal">terminal</option>
+        </select>
+      </label>
+      <button id="psave" class="primary-small">save profile</button>
+    </section>
+
+    <section class="personal-section">
+      <h3>Long-term memory</h3>
+      <p class="section-note">Facts live in SQLite and are available in every new chat. The agent can add them with its <code>remember</code> tool.</p>
+      <div id="memories" class="memories"></div>
+      <div class="memory-add">
+        <input id="memtext" placeholder="Add a durable fact…">
+        <button id="memadd" class="primary-small">add</button>
+      </div>
+    </section>
+
+    <section class="personal-section">
+      <h3>Data</h3>
+      <p class="section-note">Everything is stored server-side in <code>data/neurons.db</code>. Clear a chat from the sidebar; delete memories above.</p>
+    </section>
+  </div>
+</aside>
+
+<div id="scrim" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="/assets/app.js"></script>
+<script src="/assets/app-shell.js"></script>
+</body>
+</html>

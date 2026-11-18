@@ -79,7 +79,7 @@ async function loadModels(refresh) {
   try {
     const q = '/api/models?provider=' + encodeURIComponent(providerSel.value) +
       (refresh ? '&refresh=1' : '');
-    const r = await fetch(q, { signal: AbortSignal.timeout(25000) });
+    const r = await fetch(q, { signal: AbortSignal.timeout(120000) });
     const d = await r.json();
     if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
     const ids = (d.data || []).map(m => m.id).sort();
@@ -306,7 +306,9 @@ async function runPrompt(text) {
   // Never hang forever on a queued/throttled provider.
   const ctrl = new AbortController();
   activeCtrl = ctrl;
-  const hardStop = setTimeout(() => ctrl.abort(), agentOn ? 1860000 : 300000);
+  // Some providers queue long generations. A fixed five-minute client abort
+  // was surfacing as a model failure even when the upstream was still working.
+  const hardStop = setTimeout(() => ctrl.abort(), agentOn ? 3600000 : 1200000);
 
   const sink = {
     content: '', reasoning: '', model: '', error: '', done: false, step: 0,
@@ -432,7 +434,7 @@ async function runPrompt(text) {
       if (reply && !sink.error) await saveMessage('assistant', reply, { provider: sink.provider || providerSel.value });
     } catch (e) {
       sink.error = (e && e.name === 'AbortError')
-        ? (stopRequested ? 'stopped by you' : 'timed out after 31 minutes')
+        ? (stopRequested ? 'stopped by you' : 'timed out after 60 minutes')
         : friendlyError(e);
     } finally {
       clearTimeout(hardStop);
@@ -492,7 +494,7 @@ async function runPrompt(text) {
     if (buf.trim()) handleFrame(buf, sink);
   } catch (e) {
     sink.error = (e && e.name === 'AbortError')
-      ? (stopRequested ? 'stopped by you' : 'timed out after 5 minutes — the provider may be queueing; retry or switch models')
+      ? (stopRequested ? 'stopped by you' : 'timed out after 20 minutes — the provider may be queueing; retry or switch models')
       : friendlyError(e);
   } finally {
     clearTimeout(hardStop);

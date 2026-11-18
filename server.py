@@ -711,9 +711,9 @@ def _skills_root() -> Path:
 
 def app_version() -> str:
     try:
-        return (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()[:40] or "2.3.0"
+        return (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()[:40] or "2.3.1"
     except OSError:
-        return "2.3.0"
+        return "2.3.1"
 
 
 SKILL_REPOS = (
@@ -1770,7 +1770,7 @@ def _sse_event(event: dict) -> bytes:
 
 
 def agent_stream(messages: list, model: str | None = None, max_steps: int = 40,
-                 max_seconds: int = 1800,
+                 max_seconds: int = 3600,
                  provider: str | None = None):
     """Validate eagerly, then return the streaming agent iterator.
 
@@ -1794,7 +1794,7 @@ def _iter_agent(messages, pid, prov, model, max_steps, max_seconds):
 
     def attempt(active_prov, active_pid, model_id):
         nonlocal nudged, empty_finishes
-        client = OpenAI(api_key=active_prov["key"], base_url=active_prov["base"], timeout=240)
+        client = OpenAI(api_key=active_prov["key"], base_url=active_prov["base"], timeout=600)
         convo = list(messages)
         resp_model = model_id
         for step in range(1, max_steps + 1):
@@ -2009,7 +2009,7 @@ def run_agent(messages: list, model: str | None = None, max_steps: int = 40,
 
     def attempt(prov: dict, model_id: str) -> dict:
         nonlocal empty_finishes
-        client = OpenAI(api_key=prov["key"], base_url=prov["base"])
+        client = OpenAI(api_key=prov["key"], base_url=prov["base"], timeout=600)
         convo = list(messages)
         resp = None
         for _ in range(max_steps):
@@ -2197,6 +2197,8 @@ def get_models(force: bool = False, provider_id: str | None = None) -> dict:
                     continue
                 combined[model_id] = model
         if not combined:
+            if cached_entry and cached_entry["data"].get("data"):
+                return cached_entry["data"]
             raise RuntimeError("Neuron Free could not load models from Numes or Logfare")
         data = {"data": list(combined.values())}
         with _models_lock:
@@ -2213,8 +2215,15 @@ def get_models(force: bool = False, provider_id: str | None = None) -> dict:
         prov["base"] + "/models",
         headers={"Authorization": f"Bearer {prov['key']}"},
     )
-    with urllib.request.urlopen(req, timeout=25) as resp:
-        data = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        # A provider's /models endpoint can be briefly slow or rate-limited.
+        # Keep the last known catalogue instead of emptying the model picker.
+        if cached is not None:
+            return cached
+        raise
 
     with _models_lock:
         _MODELS_CACHE[pid] = {"data": data, "at": time.time()}
@@ -2558,6 +2567,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json(400, {"error": str(exc)[:300]})
 
+    def _harness_key(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            harness_id = str(payload.get("id") or "")
+            if payload.get("clear"):
+                harnesses.clear_key(harness_id)
+            else:
+                harnesses.set_key(harness_id, str(payload.get("key") or ""))
+            self._json(200, {"harnesses": harnesses.catalog(env_value)})
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
     def _harness_run(self):
         payload = self._read_json()
         if payload is None:
@@ -2688,6 +2711,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/plugins/test":
             self._plugin_test()
             return
+        if self.path == "/api/harnesses/key":
+            self._harness_key()
+            return
         if self.path == "/api/harnesses/run":
             self._harness_run()
             return
@@ -2750,7 +2776,7 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 method="POST",
             )
-            return urllib.request.urlopen(req, timeout=240)
+            return urllib.request.urlopen(req, timeout=600)
 
         upstream = None
         upstream_error = None
@@ -2943,6 +2969,7 @@ def main() -> int:
     data_dir = Path(args.data).expanduser() if args.data else Path(env_value("NEURONS_DATA") or APP_ROOT / "data")
     store.init_db(data_dir / "neurons.db")
     plugins.manager.configure(data_dir)
+    harnesses.configure(data_dir)
 
     if args.base_url:
         global BASE_URL

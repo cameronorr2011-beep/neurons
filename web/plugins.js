@@ -18,7 +18,8 @@ function closeConnections() {
   }
 }
 
-function openConnections() {
+function openConnections(tab) {
+  if (tab) connTab = tab;
   connPanel.classList.add('open');
   connPanel.setAttribute('aria-hidden', 'false');
   $('personal').classList.remove('open');
@@ -210,6 +211,71 @@ async function runHarness(harness) {
   }
 }
 
+async function saveHarnessKey(harness, form, button, clear) {
+  const input = form.querySelector('input[type="password"]');
+  const key = clear ? '' : (input ? input.value.trim() : '');
+  if (!clear && !key) return;
+  button.disabled = true;
+  button.textContent = clear ? 'removing…' : 'saving…';
+  try {
+    const res = await fetch('/api/harnesses/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(clear ? { id: harness.id, clear: true } : { id: harness.id, key })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    if (data.harnesses) harnessData = data.harnesses;
+    renderConnections();
+    toast(clear ? harness.name + ' key removed' : harness.name + ' key saved');
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = clear ? 'remove key' : 'save key';
+    nameError(form, String(e).slice(0, 180));
+  }
+}
+
+function harnessKeySection(harness) {
+  if (!harness.auth_env) return null;
+  const section = el('div', 'harness-key');
+  const status = el('div', 'harness-key-status');
+  status.appendChild(el('strong', null, harness.auth_label || harness.auth_env));
+  if (harness.key_saved) {
+    status.appendChild(el('span', 'conn-state on', 'saved'));
+    section.appendChild(status);
+    section.appendChild(el('div', 'conn-note', 'Stored locally in data/harnesses.json. It is never returned to the browser.'));
+    const remove = el('button', 'conn-action danger', 'remove key');
+    remove.addEventListener('click', () => saveHarnessKey(harness, section, remove, true));
+    section.appendChild(remove);
+    return section;
+  }
+  status.appendChild(el('span', 'conn-state', harness.key_source === 'env' ? 'env' : 'needed'));
+  section.appendChild(status);
+  if (harness.key_source === 'env') {
+    section.appendChild(el('div', 'conn-note', 'Using ' + harness.auth_env + ' from the server environment. Paste a key here to override it.'));
+  } else {
+    section.appendChild(el('div', 'conn-note', 'Paste a key to use this harness. It stays on this machine and is never returned to the browser.'));
+  }
+  const form = el('form', 'conn-form harness-key-form');
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.name = 'key';
+  input.placeholder = 'paste ' + (harness.auth_label || 'API key');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.required = true;
+  form.appendChild(input);
+  const save = el('button', 'conn-action primary', 'save key');
+  save.type = 'submit';
+  form.appendChild(save);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await saveHarnessKey(harness, form, save, false);
+  });
+  section.appendChild(form);
+  return section;
+}
+
 function harnessCard(harness) {
   const card = el('article', 'conn-card harness-card' + (harness.installed ? ' connected' : ''));
   card.dataset.harness = harness.id;
@@ -230,11 +296,11 @@ function harnessCard(harness) {
   docs.target = '_blank';
   docs.rel = 'noreferrer';
   actions.appendChild(docs);
-  actions.appendChild(el('span', 'conn-note inline',
-    harness.auth_configured ? harness.auth_env + ' loaded' : (harness.auth_env ? harness.auth_env + ' not set' : harness.setup)));
   card.appendChild(actions);
+  const keySection = harnessKeySection(harness);
+  if (keySection) card.appendChild(keySection);
   if (!harness.installed) {
-    card.appendChild(el('div', 'conn-note', 'Install the CLI, then reopen this panel. The command is `' + harness.command + '`.'));
+    card.appendChild(el('div', 'conn-note harness-install', 'CLI not found. Install `' + harness.command + '` and make sure it is on PATH, then reopen this panel. You can save the API key now.'));
     return card;
   }
   const prompt = document.createElement('textarea');
@@ -280,15 +346,20 @@ function renderConnections() {
     }
     for (const plugin of connData.plugins) connBody.appendChild(connectionCard(plugin));
   } else {
-    connBody.appendChild(el('div', 'conn-intro', 'Local coding agents run in their own process. Their providers are marked training-exempt and never enter the Neuron Train ledger.'));
+    connBody.appendChild(el('div', 'conn-intro', 'Claude Code, Codex, Antigravity and other local coding agents run in their own process. Add a key here if the CLI asks for one; keys stay server-side. Their providers are training-exempt and never enter the Neuron Train ledger.'));
     for (const harness of harnessData) connBody.appendChild(harnessCard(harness));
   }
 }
 
 connBtn.addEventListener('click', () => {
-  if (connPanel.classList.contains('open')) closeConnections();
-  else openConnections();
+  if (connPanel.classList.contains('open') && connTab === 'plugins') closeConnections();
+  else openConnections('plugins');
 });
 document.getElementById('connclose').addEventListener('click', closeConnections);
 $('scrim').addEventListener('click', closeConnections);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeConnections(); });
+
+for (const id of ['harnessesBtn', 'sideHarnesses']) {
+  const button = document.getElementById(id);
+  if (button) button.addEventListener('click', () => openConnections('harnesses'));
+}

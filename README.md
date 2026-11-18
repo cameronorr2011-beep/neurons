@@ -151,11 +151,19 @@ and a working directory; it runs as a one-shot local process and returns its
 output. The adapters are deliberately fixed to known commands — this is not an
 arbitrary shell bridge.
 
-`ANTHROPIC_API_KEY` is passed to Claude Code, `OPENAI_API_KEY` to Codex and
-Aider, `GEMINI_API_KEY` to Antigravity/Gemini CLI, and so on. A harness that is
-not installed is shown with its install command and documentation link.
-Antigravity, Freebuff and Cursor Agent adapters are labelled experimental
-because their CLI surfaces can change.
+Each card has a key field. Paste the key the CLI needs (Anthropic for Claude
+Code, OpenAI for Codex/Aider, Gemini for Antigravity/Gemini CLI, and so on) and
+**save key**. It is stored in `data/harnesses.json` with user-only permissions
+where the OS supports it, is used only for that harness process, and is never
+sent back to the browser. A key already in `.env` is detected; saving one in
+the UI overrides it for that harness. Use **remove key** to delete the local
+copy.
+
+A harness that is not installed still accepts a key, but cannot run until its
+CLI is on `PATH`; the card shows the command (`claude`, `codex`, `antigravity`,
+…) and a documentation link. Antigravity, Freebuff and Cursor Agent adapters are
+labelled experimental because their CLI surfaces can change. The desktop app
+does not silently install them.
 
 These providers are marked **training-exempt**. They never enter the Neuron
 Train ledger.
@@ -231,7 +239,8 @@ The marketing site is in `site/` (`index.html`, `site.css`, `site.js`).
 | `POST /api/plugins/connect` | save server-side credentials `{ id, fields }` |
 | `POST /api/plugins/test` | call the integration's test endpoint |
 | `POST /api/plugins/disconnect` | delete local credentials |
-| `GET /api/harnesses` | detected local coding agents |
+| `GET /api/harnesses` | detected local coding agents and key status |
+| `POST /api/harnesses/key` | save or clear a harness key `{ id, key }` / `{ id, clear: true }` |
 | `POST /api/harnesses/run` | run a one-shot local harness |
 | `GET /api/training` | local contribution stats |
 | `POST /api/training` | `{ enabled }` or `{ action: "clear" }` |
@@ -272,8 +281,8 @@ If you deploy it later:
 
 `run_command` has guard rails against a few catastrophic patterns, but it is not
 a sandbox. Everything else runs with the server user's privileges. Plugin
-credentials are local secrets: protect `data/plugins.json`, and revoke tokens at
-the provider if a machine is lost.
+and harness credentials are local secrets: protect `data/plugins.json` and
+`data/harnesses.json`, and revoke tokens at the provider if a machine is lost.
 
 ## Docker (local container)
 

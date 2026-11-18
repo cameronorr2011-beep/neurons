@@ -558,14 +558,14 @@ function setDrawer(open) {
 toolkitBtn.addEventListener('click', () => setDrawer(!drawer.classList.contains('open')));
 document.getElementById('kclose').addEventListener('click', () => setDrawer(false));
 installBtn.addEventListener('click', async () => {
-  const original = 'download skills';
+  const original = 'update skills';
   installBtn.disabled = true;
-  installBtn.textContent = 'downloading…';
+  installBtn.textContent = 'updating…';
   try {
     const res = await fetch('/api/skills/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overwrite: false })
+      body: JSON.stringify({ overwrite: true })
     });
     const d = await res.json();
     if (!res.ok || d.error) throw new Error(d.error || ('HTTP ' + res.status));
@@ -575,13 +575,14 @@ installBtn.addEventListener('click', async () => {
       ktab = 'skills';
       renderToolkit();
     }
-    const msg = 'installed ' + (d.installed ? d.installed.length : 0) +
-      ' · skipped ' + (d.skipped ? d.skipped.length : 0) +
-      (d.errors && d.errors.length ? ' · ' + d.errors.length + ' errors' : '');
-    setStatus(msg, !!(d.errors && d.errors.length));
-    installBtn.textContent = 'done';
+    const updated = d.installed ? d.installed.length : 0;
+    const errors = d.errors ? d.errors.length : 0;
+    const msg = (updated ? 'updated ' + updated + ' skills' : 'skills already current') +
+      (errors ? ' · ' + errors + ' errors' : '');
+    setStatus(msg, !!errors);
+    installBtn.textContent = updated ? 'updated' : 'current';
   } catch (e) {
-    setStatus('skill download failed — ' + String(e).slice(0, 120), true);
+    setStatus('skill update failed — ' + String(e).slice(0, 120), true);
     installBtn.textContent = 'failed';
   } finally {
     installBtn.disabled = false;

@@ -15,4 +15,4 @@ RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 EXPOSE 8770
 
-CMD ["python", "server.py", "--host", "0.0.0.0", "--no-screen"]
+CMD ["python", "run.py", "--host", "0.0.0.0", "--no-screen"]

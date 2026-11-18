@@ -32,7 +32,7 @@ py -3.12 -m venv .venv
 source .venv/Scripts/activate     # git-bash on Windows
 pip install -r requirements.txt
 cp .env.example .env              # fill in one provider
-py server.py --open
+py run.py --open
 ```
 
 Open <http://127.0.0.1:8770>. If the app is started from this folder, the file
@@ -45,6 +45,29 @@ py server.py --open --workspace "C:/Users/Cameron/spirulina"
 
 On Windows, `py -3.12` is recommended because the machine's bare `python` can
 be older than the syntax used here.
+
+## Automatic updates
+
+Start with `run.py` to enable updates. On every launch it reads `VERSION` from
+the repository, and if the remote version is newer it downloads that revision
+before importing the server. A failed check never blocks startup.
+
+Only application code is replaced: `server.py`, `store.py`, `updater.py`,
+`run.py`, `web/`, `tests/`, `requirements.txt`, `README.md`, `Dockerfile` and
+`VERSION`. **`data/`, `.env`, `.env.*` and `.agents/` are never written by the
+updater.** Your profile, memories, chats, keys and installed skills survive an
+update.
+
+```bash
+py run.py --no-update   # start without checking
+```
+
+Set `NEURONS_UPDATE=off` to disable checks for a deployment, or
+`NEURONS_UPDATE_BRANCH` to follow a branch other than `main`. Starting
+`server.py` directly also bypasses the launcher and its update check.
+
+To publish an update, bump `VERSION` in the repository and push. Existing
+launches pick it up the next time they start.
 
 ### Configuration
 
@@ -71,6 +94,8 @@ silently shadowed by an old shell export.
 | `NEURONS_ENV_FILE` | Extra `.env` file to load |
 | `NEURONS_SKILLS` | Skills directory (defaults to `./.agents/skills`) |
 | `NEURONS_MCP_CONFIG` | MCP server config (defaults to `./.mcp.json`) |
+| `NEURONS_UPDATE` | `off` disables the startup update check |
+| `NEURONS_UPDATE_BRANCH` | branch followed by the updater (defaults to `main`) |
 
 Never commit `.env` or `data/`: both are ignored.
 
@@ -136,8 +161,11 @@ New app endpoints:
 | `GET /api/health` | liveness check |
 
 Existing endpoints remain: `/api/models`, `/api/providers`, `/api/toolkit`,
-`/api/tool`, `/api/skills/install`, `/api/chat`, `/api/agent/stream`,
-`/api/agent`, and `/api/screenshot`.
+`/api/tool`, `/api/chat`, `/api/agent/stream`, `/api/agent`, and
+`/api/screenshot`. `POST /api/skills/install` accepts `{ "overwrite": true }`
+to refresh installed skills; the **update skills** button does this. GitHub
+API tokens are read from `GITHUB_TOKEN` or `GH_TOKEN` in `.env`, which avoids
+anonymous rate limits during a full catalog download.
 
 ## Tests
 
@@ -145,8 +173,10 @@ Existing endpoints remain: `/api/models`, `/api/providers`, `/api/toolkit`,
 py -3.12 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-The store tests use a temporary database and cover profile validation, memory
-deduplication/deletion, conversation ordering and cascade deletion.
+The store tests cover profile validation, memory deduplication/deletion,
+conversation ordering and cascade deletion. The updater tests verify that an
+update replaces code but preserves `data/`, `.env` and `.agents/`, and that an
+incomplete archive is rejected before any code is copied.
 
 ## Security
 
@@ -172,5 +202,6 @@ docker run --rm -p 127.0.0.1:8770:8770 \
 ```
 
 The container command binds `0.0.0.0` internally so Docker can forward the
-port. Publish it to `127.0.0.1` only, as above. A public deployment needs an
-authentication layer first.
+port. It uses `run.py`, so container restarts also check for updates while the
+`/app/data` volume preserves user data. Publish it to `127.0.0.1` only, as
+above. A public deployment needs an authentication layer first.

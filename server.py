@@ -649,6 +649,13 @@ def _skills_root() -> Path:
     return Path(env_value("NEURONS_SKILLS") or APP_ROOT / ".agents" / "skills")
 
 
+def app_version() -> str:
+    try:
+        return (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()[:40] or "2.2.0"
+    except OSError:
+        return "2.2.0"
+
+
 SKILL_REPOS = (
     ("addyosmani", "web-quality-skills"),
     ("vercel-labs", "agent-skills"),
@@ -660,13 +667,28 @@ _SKILL_TOTAL_MAX = 80 * 1024 * 1024
 
 
 def _github_request(url: str, timeout: int = 30) -> bytes:
-    headers = {"User-Agent": "Neurons/1.0", "Accept": "application/vnd.github+json"}
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    headers = {"User-Agent": "Neurons/2.2", "Accept": "application/vnd.github+json"}
+    token = env_value("GITHUB_TOKEN") or env_value("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    last_error = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+        time.sleep(2 ** attempt)
+    if last_error:
+        raise last_error
+    raise RuntimeError("GitHub request failed")
 
 
 def _github_json(url: str) -> dict:
@@ -2173,7 +2195,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if self.path.startswith("/api/health"):
-            self._json(200, {"ok": True, "app": "neurons", "version": "2.0"})
+            self._json(200, {"ok": True, "app": "neurons", "version": app_version()})
             return
         if self.path.startswith("/api/state"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

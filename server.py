@@ -192,7 +192,7 @@ STYLE_HINTS = {
 }
 
 
-def personalized_messages(messages: list) -> list:
+def personalized_messages(messages: list, with_tools: bool = True) -> list:
     """Prepend the user's profile and durable memories to the model context.
 
     Profile and memories are stored server-side, so they survive a browser
@@ -219,10 +219,11 @@ def personalized_messages(messages: list) -> list:
     if memories:
         facts = "\n".join(f"- {m['text'][:500]}" for m in memories[:50])
         context.append("Durable memories from previous conversations (use when relevant):\n" + facts)
-    context.append(
-        "When the user shares a lasting preference, personal fact or project detail, "
-        "call the remember tool so it survives this conversation. Do not remember transient commands."
-    )
+    if with_tools:
+        context.append(
+            "When the user shares a lasting preference, personal fact or project detail, "
+            "call the remember tool so it survives this conversation. Do not remember transient commands."
+        )
     return [{"role": "system", "content": system + "\n\n" + "\n\n".join(context)}] + rest
 
 # ---------------------------------------------------------------------------
@@ -2289,7 +2290,7 @@ class Handler(BaseHTTPRequestHandler):
         messages = payload.get("messages") or []
         if not messages:
             messages = [{"role": "user", "content": "Hello"}]
-        messages = personalized_messages(messages)
+        messages = personalized_messages(messages, with_tools=False)
         try:
             used_id, used = resolve_provider(payload.get("provider"))
         except ValueError as exc:

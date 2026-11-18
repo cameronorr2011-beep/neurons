@@ -32,8 +32,8 @@ BRANCH = os.environ.get("NEURONS_UPDATE_BRANCH") or "main"
 VERSION_FILE = APP_ROOT / "VERSION"
 MAX_ARCHIVE = 30 * 1024 * 1024
 ALLOWED_TOP = {
-    "server.py", "store.py", "updater.py", "run.py",
-    "web", "tests", "requirements.txt", "README.md", "Dockerfile", "VERSION",
+    "server.py", "store.py", "updater.py", "run.py", "plugins.py", "harnesses.py",
+    "web", "site", "tests", "requirements.txt", "README.md", "Dockerfile", "VERSION",
 }
 PROTECTED_TOP = {"data", ".env", ".env.local", ".agents", ".git", "__pycache__"}
 

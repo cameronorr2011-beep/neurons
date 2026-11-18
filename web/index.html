@@ -6,8 +6,10 @@
 <title>Neurons</title>
 <link rel="stylesheet" href="/assets/styles.css">
 <link rel="stylesheet" href="/assets/app-extra.css">
+<link rel="stylesheet" href="/assets/app-v3.css">
 </head>
 <body>
+<div id="backdrop" aria-hidden="true"></div>
 <aside id="sidebar" aria-label="Chats">
   <div class="brand">
     <span class="mark">N</span>
@@ -21,7 +23,8 @@
   <div id="convos" class="convos"></div>
   <div class="side-foot">
     <button id="personalbtn" class="side-button"><span id="avatar">N</span> memory &amp; profile</button>
-    <div class="side-meta">local-first · <span id="dbStatus">sqlite</span></div>
+    <button id="sideConnections" class="side-button"><span class="side-icon">✦</span> connections</button>
+    <div class="side-meta">local-first · <span id="dbStatus">sqlite</span> · <a href="/site/" target="_blank" rel="noreferrer">site ↗</a></div>
   </div>
 </aside>
 
@@ -33,9 +36,12 @@
   <span class="spacer"></span>
   <select id="themeSel" title="switch UI theme" aria-label="UI theme">
     <option value="graphite">graphite</option>
+    <option value="aurora">aurora</option>
+    <option value="ember">ember</option>
     <option value="paper">paper</option>
     <option value="terminal">terminal</option>
   </select>
+  <button id="connectionsBtn" class="chip connections-chip" title="Connect GitHub, Notion, Gmail, Slack, Sigma and more">connections <span id="connCount" class="badge" hidden></span></button>
   <button id="kinstall" class="chip" title="Download or refresh every skill from the public catalog into .agents/skills">update skills</button>
   <button id="toolkit" class="chip" title="MCP servers, skills and every tool — run any of them yourself">toolkit <span id="kcount" class="badge"></span></button>
   <button id="agent" class="chip" title="let the model use your PC: files, shell, screen, mouse and keyboard">agent</button>
@@ -53,6 +59,12 @@
         <button class="suggestion" data-prompt="Inspect this workspace and tell me what I should work on next.">inspect the workspace</button>
         <button class="suggestion" data-prompt="Remember that I prefer concise, direct answers with no filler.">set a preference</button>
         <button class="suggestion" data-prompt="Run a quick system check and report what this machine is doing.">check this machine</button>
+      </div>
+      <div class="welcome-badges" aria-label="Neurons capabilities">
+        <span><b></b> private memory</span>
+        <span><b></b> bring your own models</span>
+        <span><b></b> work tools</span>
+        <span><b></b> local harness</span>
       </div>
     </section>
   </div>
@@ -106,11 +118,26 @@
       <label class="field">UI theme
         <select id="ptheme">
           <option value="graphite">graphite</option>
+          <option value="aurora">aurora</option>
+          <option value="ember">ember</option>
           <option value="paper">paper</option>
           <option value="terminal">terminal</option>
         </select>
       </label>
       <button id="psave" class="primary-small">save profile</button>
+    </section>
+
+    <section class="personal-section appearance-section">
+      <h3>Appearance</h3>
+      <p class="section-note">Make the room yours. Upload a still image or an animated GIF; it stays on this machine with the rest of your data.</p>
+      <div class="bg-actions">
+        <input id="bgfile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <button id="bgpick" class="primary-small">upload image / GIF</button>
+        <button id="bgclear" class="ghost-small">remove</button>
+        <span id="bgstatus" class="conn-note inline">using theme backdrop</span>
+      </div>
+      <label class="range-field">Blur <span id="bgblurvalue">0</span><input id="bgblur" type="range" min="0" max="24" value="0"></label>
+      <label class="range-field">Dim <span id="bgdimvalue">42</span><input id="bgdim" type="range" min="0" max="80" value="42"></label>
     </section>
 
     <section class="personal-section">
@@ -123,6 +150,18 @@
       </div>
     </section>
 
+    <section class="personal-section training-section">
+      <h3>Neuron Train <span class="tiny-badge">opt-in</span></h3>
+      <p class="section-note">Off by default. When enabled, this build keeps a local contribution ledger for messages from Neuron Free models. It does <strong>not</strong> upload or sell your data. Claude Code, Codex, Antigravity and other protected harnesses are always excluded.</p>
+      <label class="switch-row"><input id="trainingToggle" type="checkbox"> <span>count eligible messages in the local ledger</span></label>
+      <div id="trainingStats" class="training-stats">not contributing</div>
+      <div class="training-actions">
+        <a id="trainingExport" class="ghost-small" href="/api/training/export" download="neurons-training.jsonl">export ledger</a>
+        <button id="trainingClear" class="ghost-small">clear ledger</button>
+      </div>
+      <p class="section-note fine-print">Payouts are intentionally not enabled. Exporting gives you a portable record for a future, explicitly negotiated data partner.</p>
+    </section>
+
     <section class="personal-section">
       <h3>Data</h3>
       <p class="section-note">Everything is stored server-side in <code>data/neurons.db</code>. Clear a chat from the sidebar; delete memories above.</p>
@@ -130,10 +169,22 @@
   </div>
 </aside>
 
+<aside id="connections" aria-hidden="true" aria-label="Connections">
+  <div class="drawer-head">
+    <strong>Connections</strong>
+    <span class="conn-broker-dot" title="local broker running"></span>
+    <span class="spacer"></span>
+    <button id="connclose" class="chip">close</button>
+  </div>
+  <div class="tabs" id="connectionsTabs"></div>
+  <div class="drawer-body" id="connectionsBody"><div class="empty">loading…</div></div>
+</aside>
+
 <div id="scrim" hidden></div>
 <div id="toast" class="toast" hidden></div>
 
 <script src="/assets/app.js"></script>
 <script src="/assets/app-shell.js"></script>
+<script src="/assets/plugins.js"></script>
 </body>
 </html>

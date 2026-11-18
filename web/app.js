@@ -270,7 +270,7 @@ async function runPrompt(text) {
   history.push({ role: 'user', content: text });
   hideWelcome();
   await ensureConversation(text);
-  if (conversationId) await saveMessage('user', text);
+  if (conversationId) await saveMessage('user', text, { provider: providerSel.value });
   scrollDown();
 
   const msg = el('div', 'msg assistant');
@@ -429,7 +429,7 @@ async function runPrompt(text) {
       if (buf.trim()) handleAgentFrame(buf);
       const reply = sink.content || live;
       history.push({ role: 'assistant', content: reply || '(no answer text)' });
-      if (reply && !sink.error) await saveMessage('assistant', reply);
+      if (reply && !sink.error) await saveMessage('assistant', reply, { provider: sink.provider || providerSel.value });
     } catch (e) {
       sink.error = (e && e.name === 'AbortError')
         ? (stopRequested ? 'stopped by you' : 'timed out after 31 minutes')
@@ -506,7 +506,7 @@ async function runPrompt(text) {
   } else {
     const reply = sink.content || sink.reasoning;
     history.push({ role: 'assistant', content: reply });
-    if (reply) await saveMessage('assistant', reply);
+    if (reply) await saveMessage('assistant', reply, { provider: sink.provider || providerSel.value });
   }
   if (sink.reasoning) {
     const secs = ((performance.now() - started) / 1000).toFixed(1);
@@ -551,6 +551,16 @@ let kdata = null;
 let ktab = 'all';
 
 function setDrawer(open) {
+  if (open) {
+    document.getElementById('personal').classList.remove('open');
+    document.getElementById('personal').setAttribute('aria-hidden', 'true');
+    const conn = document.getElementById('connections');
+    if (conn) { conn.classList.remove('open'); conn.setAttribute('aria-hidden', 'true'); }
+    document.getElementById('scrim').hidden = false;
+  } else if (!document.getElementById('personal').classList.contains('open') &&
+             !document.getElementById('connections').classList.contains('open')) {
+    document.getElementById('scrim').hidden = true;
+  }
   drawer.classList.toggle('open', open);
   drawer.setAttribute('aria-hidden', open ? 'false' : 'true');
   if (open) { loadToolkit(); ksearch.focus(); }

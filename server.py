@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import base64
+import hashlib
 import html
 import platform
 import ctypes
@@ -39,6 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import store
+import plugins
+import harnesses
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -118,6 +121,19 @@ def provider_defs() -> dict:
             "key": custom_key,
             "model": env_value("NEURONS_MODEL") or "",
         }
+    # One virtual catalogue across Numes and Logfare. It routes each selected
+    # model to the provider that actually owns it; the keys never leave here.
+    members = [pid for pid in ("numes", "logfare") if pid in defs]
+    if len(members) > 1:
+        first = defs[members[0]]
+        defs["neuron-free"] = {
+            "label": "Neuron Free",
+            "base": first["base"],
+            "key": first["key"],
+            "model": DEFAULT_PROVIDER_MODELS["numes"],
+            "members": members,
+            "virtual": True,
+        }
     return defs
 
 
@@ -126,6 +142,8 @@ def default_provider_id() -> str:
     wanted = env_value("NEURONS_PROVIDER")
     if wanted in defs:
         return wanted
+    if "neuron-free" in defs:
+        return "neuron-free"
     return next(iter(defs), "")
 
 
@@ -155,7 +173,10 @@ def ensure_model(pid: str, prov: dict, model: str) -> str:
     """
     if not model:
         return prov["model"]
-    with _models_lock:
+    lock = globals().get("_models_lock")
+    if lock is None:
+        return model
+    with lock:
         entry = _MODELS_CACHE.get(pid)
     if not entry:
         return model
@@ -189,6 +210,13 @@ def effective_default_model(pid: str, prov: dict) -> str:
     ids = [m.get("id") for m in entry["data"].get("data", []) if m.get("id")]
     if not ids:
         return configured
+    if pid == "neuron-free":
+        free = [model_id for model_id in ids if str(model_id).endswith(":free")]
+        if configured in free:
+            return configured
+        if free:
+            return free[0]
+        return ids[0]
     if pid == "numes":
         free = [model_id for model_id in ids if str(model_id).endswith(":free")]
         if configured in free:
@@ -198,6 +226,26 @@ def effective_default_model(pid: str, prov: dict) -> str:
     if configured in ids:
         return configured
     return ids[0]
+
+
+def route_provider(pid: str, prov: dict, model: str) -> tuple[str, dict, str]:
+    """Resolve the real provider for a virtual Neuron Free model."""
+    if not prov.get("virtual"):
+        return pid, prov, model
+    defs = provider_defs()
+    members = [m for m in prov.get("members", []) if m in defs]
+    for member in members:
+        entry = _MODELS_CACHE.get(member)
+        ids = {m.get("id") for m in (entry or {}).get("data", {}).get("data", [])}
+        if model in ids:
+            return member, defs[member], model
+    if model.startswith("logfare/") and "logfare" in members:
+        return "logfare", defs["logfare"], model
+    if model.endswith(":free") and "numes" in members:
+        return "numes", defs["numes"], model
+    if members:
+        return members[0], defs[members[0]], model
+    raise ValueError("Neuron Free has no configured member providers")
 
 
 DEFAULT_PROVIDER = default_provider_id()
@@ -251,6 +299,17 @@ def personalized_messages(messages: list, with_tools: bool = True) -> list:
     if memories:
         facts = "\n".join(f"- {m['text'][:500]}" for m in memories[:50])
         context.append("Durable memories from previous conversations (use when relevant):\n" + facts)
+    if with_tools:
+        try:
+            connected = plugins.manager.catalog().get("connected") or []
+            if connected:
+                context.append(
+                    "Connected integrations (credentials stay on the server): "
+                    + ", ".join(connected)
+                    + ". Use the plugin_call tool to read or act in them."
+                )
+        except Exception:
+            pass
     if with_tools:
         context.append(
             "When the user shares a lasting preference, personal fact or project detail, "
@@ -581,6 +640,7 @@ TOOLS = [
         },
     },
 ]
+TOOLS.append(plugins.plugin_tool_schema())
 
 
 def _resolve(rel: str) -> Path:
@@ -651,9 +711,9 @@ def _skills_root() -> Path:
 
 def app_version() -> str:
     try:
-        return (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()[:40] or "2.2.0"
+        return (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()[:40] or "2.3.0"
     except OSError:
-        return "2.2.0"
+        return "2.3.0"
 
 
 SKILL_REPOS = (
@@ -1165,6 +1225,7 @@ def _tool_delegate(args: dict) -> str:
     try:
         pid, prov = resolve_provider(args.get("provider"))
         model = ensure_model(pid, prov, args.get("model") or prov["model"])
+        pid, prov, model = route_provider(pid, prov, model)
     except Exception as exc:
         return f"subagent could not start: {str(exc)[:200]}"
     _SUBAGENT_DEPTH.depth = depth + 1
@@ -1351,6 +1412,10 @@ def _tool_remember(args: dict) -> str:
     return f"remembered: {item['text'][:300]}"
 
 
+def _tool_plugin_call(args: dict) -> str:
+    return plugins.manager.call_text(args)
+
+
 _TOOL_IMPL = {
     "list_dir": _tool_list_dir,
     "read_file": _tool_read_file,
@@ -1358,6 +1423,7 @@ _TOOL_IMPL = {
     "list_skills": _tool_list_skills,
     "load_skill": _tool_load_skill,
     "remember": _tool_remember,
+    "plugin_call": _tool_plugin_call,
     "web_search": _tool_web_search,
     "delegate": _tool_delegate,
     "screenshot": _tool_screenshot,
@@ -1617,6 +1683,7 @@ EXTRA_TOOLS = {
     "processes": _tool_processes,
     "system_info": _tool_system_info,
     "volume": _tool_volume,
+    "plugin_call": _tool_plugin_call,
 }
 
 
@@ -1712,6 +1779,7 @@ def agent_stream(messages: list, model: str | None = None, max_steps: int = 40,
     """
     pid, prov = resolve_provider(provider)
     model = ensure_model(pid, prov, model or effective_default_model(pid, prov))
+    pid, prov, model = route_provider(pid, prov, model)
     return _iter_agent(personalized_messages(messages), pid, prov, model, max_steps, max_seconds)
 
 
@@ -2009,6 +2077,7 @@ def run_agent(messages: list, model: str | None = None, max_steps: int = 40,
 
     pid, prov = resolve_provider(provider)
     model = ensure_model(pid, prov, model or effective_default_model(pid, prov))
+    pid, prov, model = route_provider(pid, prov, model)
     try:
         result = attempt(prov, model)
         return {**result, "provider": pid}
@@ -2068,6 +2137,7 @@ def toolkit_payload() -> dict:
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
+SITE_ROOT = Path(__file__).resolve().parent / "site"
 
 
 
@@ -2109,6 +2179,29 @@ def _is_free_model(entry: dict) -> bool:
 def get_models(force: bool = False, provider_id: str | None = None) -> dict:
     pid, prov = resolve_provider(provider_id)
     now = time.time()
+    if prov.get("virtual"):
+        cached_entry = _MODELS_CACHE.get(pid)
+        if cached_entry and not force and (now - cached_entry["at"]) < _MODELS_TTL:
+            return cached_entry["data"]
+        combined: dict[str, dict] = {}
+        for member in prov.get("members", []):
+            try:
+                member_data = get_models(force=force, provider_id=member)
+            except Exception:
+                continue
+            for model in member_data.get("data", []):
+                model_id = model.get("id")
+                if not model_id or model_id in combined:
+                    continue
+                if member == "numes" and not _is_free_model(model):
+                    continue
+                combined[model_id] = model
+        if not combined:
+            raise RuntimeError("Neuron Free could not load models from Numes or Logfare")
+        data = {"data": list(combined.values())}
+        with _models_lock:
+            _MODELS_CACHE[pid] = {"data": data, "at": time.time()}
+        return data
     with _models_lock:
         entry = _MODELS_CACHE.get(pid)
         fresh = entry is not None and (now - entry["at"]) < _MODELS_TTL
@@ -2158,6 +2251,40 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if self.path in ("/site", "/site/"):
+            try:
+                body = (SITE_ROOT / "index.html").read_bytes()
+            except OSError as exc:
+                self._json(404, {"error": f"site unavailable: {exc}"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path.startswith("/site/assets/"):
+            name = self.path.split("?", 1)[0].rsplit("/", 1)[-1]
+            site_types = {
+                "site.css": "text/css; charset=utf-8",
+                "site.js": "text/javascript; charset=utf-8",
+            }
+            if name not in site_types:
+                self._json(404, {"error": "not found"})
+                return
+            try:
+                body = (SITE_ROOT / name).read_bytes()
+            except OSError:
+                self._json(404, {"error": "not found"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", site_types[name])
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path in ("/", "/index.html"):
             try:
                 body = (WEB_ROOT / "index.html").read_bytes()
@@ -2178,6 +2305,8 @@ class Handler(BaseHTTPRequestHandler):
                 "app-extra.css": "text/css; charset=utf-8",
                 "app.js": "text/javascript; charset=utf-8",
                 "app-shell.js": "text/javascript; charset=utf-8",
+                "app-v3.css": "text/css; charset=utf-8",
+                "plugins.js": "text/javascript; charset=utf-8",
             }
             if name not in asset_types:
                 self._json(404, {"error": "not found"})
@@ -2234,7 +2363,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "providers": [
                     {"id": pid, "label": p["label"], "base_url": p["base"],
-                     "model": effective_default_model(pid, p)}
+                     "model": effective_default_model(pid, p),
+                     "virtual": bool(p.get("virtual"))}
                     for pid, p in provider_defs().items()
                 ],
                 "default": default_provider_id(),
@@ -2243,6 +2373,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/api/toolkit"):
             self._json(200, toolkit_payload())
+            return
+        if self.path.startswith("/api/plugins"):
+            self._json(200, plugins.manager.catalog())
+            return
+        if self.path.startswith("/api/harnesses"):
+            self._json(200, {"harnesses": harnesses.catalog(env_value)})
+            return
+        if self.path.startswith("/api/background/file/"):
+            self._background_file()
+            return
+        if self.path.startswith("/api/training/export"):
+            self._training_export()
+            return
+        if self.path.startswith("/api/training"):
+            self._json(200, store.training_stats())
             return
         if self.path.startswith("/api/screenshot"):
             self._screenshot()
@@ -2320,6 +2465,146 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json(502, {"error": str(exc)[:300]})
 
+    def _background_root(self) -> Path:
+        return Path(store.DB_PATH).parent / "backgrounds"
+
+    def _background_file(self):
+        name = urllib.parse.unquote(self.path.split("/api/background/file/", 1)[1]).split("?", 1)[0]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,140}", name):
+            self._json(404, {"error": "not found"})
+            return
+        path = (self._background_root() / name).resolve()
+        root = self._background_root().resolve()
+        if root not in path.parents or not path.is_file():
+            self._json(404, {"error": "not found"})
+            return
+        types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".gif": "image/gif", ".webp": "image/webp"}
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", types.get(path.suffix.lower(), "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _upload_background(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 16 * 1024 * 1024:
+            self._json(413, {"error": "background must be between 1 byte and 16 MB"})
+            return
+        raw = self.rfile.read(length)
+        kind = None
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            kind = ("png", "image/png")
+        elif raw.startswith(b"\xff\xd8\xff"):
+            kind = ("jpg", "image/jpeg")
+        elif raw[:6] in (b"GIF87a", b"GIF89a"):
+            kind = ("gif", "image/gif")
+        elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            kind = ("webp", "image/webp")
+        if not kind:
+            self._json(415, {"error": "use a PNG, JPEG, WebP or animated GIF"})
+            return
+        root = self._background_root()
+        root.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(raw).hexdigest()[:16]
+        name = f"bg-{int(time.time())}-{digest}.{kind[0]}"
+        (root / name).write_bytes(raw)
+        old = store.get_profile().get("background") or ""
+        if old and old != name and re.fullmatch(r"[A-Za-z0-9._-]{1,140}", old):
+            try:
+                (root / old).unlink(missing_ok=True)
+            except OSError:
+                pass
+        profile = store.update_profile({"background": name})
+        self._json(200, {"profile": profile, "url": f"/api/background/file/{name}"})
+
+    def _delete_background(self):
+        profile = store.get_profile()
+        name = profile.get("background") or ""
+        if name and re.fullmatch(r"[A-Za-z0-9._-]{1,140}", name):
+            try:
+                (self._background_root() / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._json(200, {"profile": store.update_profile({"background": ""})})
+
+    def _plugin_connect(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            result = plugins.manager.connect(str(payload.get("id") or ""), payload.get("fields") or {})
+            self._json(200, result)
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
+    def _plugin_disconnect(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            self._json(200, plugins.manager.disconnect(str(payload.get("id") or "")))
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
+    def _plugin_test(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            self._json(200, plugins.manager.test(str(payload.get("id") or "")))
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
+    def _harness_run(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            cwd = _resolve(payload.get("cwd") or ".")
+            if not cwd.is_dir():
+                raise ValueError(f"not a directory: {cwd}")
+            result = harnesses.run(
+                str(payload.get("id") or ""), str(payload.get("prompt") or ""), cwd, env_value
+            )
+            self._json(200, result)
+        except subprocess.TimeoutExpired:
+            self._json(504, {"error": f"harness timed out after {harnesses.TIMEOUT}s"})
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
+    def _training_update(self):
+        payload = self._read_json()
+        if payload is None:
+            return
+        action = str(payload.get("action") or "")
+        try:
+            if action == "clear":
+                removed = store.clear_training_ledger()
+                self._json(200, {"cleared": removed, **store.training_stats()})
+            else:
+                store.set_training_opt_in(bool(payload.get("enabled")))
+                self._json(200, store.training_stats())
+        except Exception as exc:
+            self._json(400, {"error": str(exc)[:300]})
+
+    def _training_export(self):
+        rows = store.export_training()
+        body = ("\n".join(json.dumps({
+            "id": row["id"], "conversation_id": row["conversation_id"],
+            "role": row["role"], "content": row["content"],
+            "tokens": row["tokens"], "provider": row["provider"],
+            "created_at": row["created_at"],
+        }, ensure_ascii=False) for row in rows) + ("\n" if rows else "")).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Content-Disposition", "attachment; filename=neurons-training.jsonl")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
         try:
@@ -2388,6 +2673,27 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json(400, {"error": str(exc)[:300]})
             return
+        if self.path == "/api/background":
+            self._upload_background()
+            return
+        if self.path == "/api/background/delete":
+            self._delete_background()
+            return
+        if self.path == "/api/plugins/connect":
+            self._plugin_connect()
+            return
+        if self.path == "/api/plugins/disconnect":
+            self._plugin_disconnect()
+            return
+        if self.path == "/api/plugins/test":
+            self._plugin_test()
+            return
+        if self.path == "/api/harnesses/run":
+            self._harness_run()
+            return
+        if self.path == "/api/training":
+            self._training_update()
+            return
         if self.path == "/api/skills/install":
             self._install_skills()
             return
@@ -2423,6 +2729,7 @@ class Handler(BaseHTTPRequestHandler):
         model = payload.get("model") or effective_default_model(used_id, used)
         try:
             model = ensure_model(used_id, used, model)
+            used_id, used, model = route_provider(used_id, used, model)
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
@@ -2635,6 +2942,7 @@ def main() -> int:
 
     data_dir = Path(args.data).expanduser() if args.data else Path(env_value("NEURONS_DATA") or APP_ROOT / "data")
     store.init_db(data_dir / "neurons.db")
+    plugins.manager.configure(data_dir)
 
     if args.base_url:
         global BASE_URL

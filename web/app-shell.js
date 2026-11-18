@@ -1,10 +1,11 @@
 /* Neurons app shell. This runs after app.js, so it can build on the existing
    streaming chat, queue and toolkit code without replacing them. */
 const $ = (id) => document.getElementById(id);
-const THEMES = ['graphite', 'paper', 'terminal'];
+const THEMES = ['graphite', 'aurora', 'ember', 'paper', 'terminal'];
 const stateReady = new Promise((resolve) => { window.__neuronsStateResolve = resolve; });
 
 let profile = {};
+let training = {};
 let memories = [];
 let conversations = [];
 let conversationId = null;
@@ -59,6 +60,122 @@ function fillProfileForm() {
   $('pabout').value = profile.about || '';
   $('pstyle').value = profile.style || 'balanced';
   $('ptheme').value = profile.theme || document.documentElement.dataset.theme || 'graphite';
+  $('bgblur').value = String(profile.background_blur ?? 0);
+  $('bgdim').value = String(profile.background_dim ?? 42);
+  $('bgblurvalue').textContent = String(profile.background_blur ?? 0);
+  $('bgdimvalue').textContent = String(profile.background_dim ?? 42);
+  applyBackground();
+}
+
+function applyBackground() {
+  const name = String(profile.background || '');
+  const blur = Math.max(0, Math.min(24, Number(profile.background_blur ?? 0)));
+  const dim = Math.max(0, Math.min(80, Number(profile.background_dim ?? 42)));
+  const root = document.documentElement;
+  root.style.setProperty('--bg-blur', blur + 'px');
+  root.style.setProperty('--bg-dim', String(dim / 100));
+  if (name) {
+    root.style.setProperty('--custom-bg', 'url("/api/background/file/' + encodeURIComponent(name) + '")');
+    document.body.classList.add('has-bg');
+    $('bgstatus').textContent = 'custom background';
+  } else {
+    root.style.removeProperty('--custom-bg');
+    document.body.classList.remove('has-bg');
+    $('bgstatus').textContent = 'using theme backdrop';
+  }
+}
+
+function renderTraining() {
+  const box = $('trainingStats');
+  if (!box) return;
+  $('trainingToggle').checked = !!training.enabled;
+  const count = Number(training.contributions || 0);
+  const tokens = Number(training.tokens || 0);
+  box.textContent = training.enabled
+    ? (count ? count + ' local contributions · ' + tokens.toLocaleString() + ' estimated tokens' : 'opted in · no contributions yet')
+    : 'not contributing';
+  $('trainingExport').classList.toggle('disabled', !count);
+  $('trainingClear').disabled = !count;
+}
+
+async function saveBackgroundSettings() {
+  const payload = {
+    background_blur: Number($('bgblur').value),
+    background_dim: Number($('bgdim').value),
+  };
+  try {
+    const res = await fetch('/api/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.profile) {
+      profile = data.profile;
+      applyBackground();
+    }
+  } catch {}
+}
+
+async function uploadBackground(file) {
+  if (!file) return;
+  if (file.size > 16 * 1024 * 1024) { toast('background must be under 16 MB', true); return; }
+  try {
+    const res = await fetch('/api/background', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.profile) throw new Error(data.error || ('HTTP ' + res.status));
+    profile = data.profile;
+    applyBackground();
+    toast('background updated');
+  } catch (e) {
+    toast('background upload failed — ' + String(e).slice(0, 100), true);
+  }
+}
+
+async function clearBackground() {
+  try {
+    const res = await fetch('/api/background/delete', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.profile) throw new Error(data.error || ('HTTP ' + res.status));
+    profile = data.profile;
+    applyBackground();
+    toast('background removed');
+  } catch { toast('could not remove background', true); }
+}
+
+async function setTraining(enabled) {
+  try {
+    const res = await fetch('/api/training', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    training = data;
+    renderTraining();
+    toast(enabled ? 'Neuron Train is on — local ledger only' : 'Neuron Train is off');
+  } catch (e) { toast('could not update training setting', true); }
+}
+
+async function clearTraining() {
+  if (!window.confirm('Clear the local training ledger?')) return;
+  try {
+    const res = await fetch('/api/training', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear' }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    training = data;
+    renderTraining();
+    toast('training ledger cleared');
+  } catch { toast('could not clear ledger', true); }
 }
 
 function showWelcome() { $('welcome').hidden = false; }
@@ -122,19 +239,30 @@ function setSidebar(open) {
   document.body.classList.toggle('sidebar-open', open);
   if (open) {
     $('scrim').hidden = false;
-  } else if (!$('personal').classList.contains('open')) {
+  } else if (!$('personal').classList.contains('open') &&
+             !$('connections').classList.contains('open') &&
+             !$('drawer').classList.contains('open')) {
     $('scrim').hidden = true;
   }
 }
 
 function setPersonal(open) {
+  if (open) {
+    $('connections').classList.remove('open');
+    $('connections').setAttribute('aria-hidden', 'true');
+    $('drawer').classList.remove('open');
+    $('drawer').setAttribute('aria-hidden', 'true');
+  }
   $('personal').classList.toggle('open', open);
   $('personal').setAttribute('aria-hidden', open ? 'false' : 'true');
   if (open) {
     fillProfileForm();
     renderMemories();
+    renderTraining();
     $('scrim').hidden = false;
-  } else if (!$('personal').classList.contains('open')) {
+  } else if (!$('personal').classList.contains('open') &&
+             !$('connections').classList.contains('open') &&
+             !$('drawer').classList.contains('open')) {
     $('scrim').hidden = true;
   }
 }
@@ -171,13 +299,13 @@ async function ensureConversation(text) {
   }
 }
 
-async function saveMessage(role, content) {
+async function saveMessage(role, content, meta) {
   if (!conversationId || !content) return;
   try {
     const res = await fetch('/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId, role, content }),
+      body: JSON.stringify({ conversation_id: conversationId, role, content, meta: meta || {} }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     if (role === 'user') await refreshConversations();
@@ -321,12 +449,15 @@ async function loadState() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
     profile = data.profile || {};
+    training = data.training || {};
     memories = data.memories || [];
     conversations = data.conversations || [];
     const storedTheme = (() => { try { return localStorage.getItem('neurons.theme'); } catch { return ''; } })();
     applyTheme(storedTheme || profile.theme || 'graphite');
     fillProfileForm();
+    applyBackground();
     renderIdentity();
+    renderTraining();
     renderMemories();
     renderConversations();
     if (data.conversation && data.conversation.messages && data.conversation.messages.length) {
@@ -357,6 +488,26 @@ $('newchat').addEventListener('click', resetChat);
 $('personalbtn').addEventListener('click', () => setPersonal(true));
 $('personalclose').addEventListener('click', () => setPersonal(false));
 $('psave').addEventListener('click', saveProfile);
+$('bgpick').addEventListener('click', () => $('bgfile').click());
+$('bgfile').addEventListener('change', () => uploadBackground($('bgfile').files[0]));
+$('bgclear').addEventListener('click', clearBackground);
+$('bgblur').addEventListener('input', () => {
+  $('bgblurvalue').textContent = $('bgblur').value;
+  profile.background_blur = Number($('bgblur').value);
+  applyBackground();
+});
+$('bgdim').addEventListener('input', () => {
+  $('bgdimvalue').textContent = $('bgdim').value;
+  profile.background_dim = Number($('bgdim').value);
+  applyBackground();
+});
+$('bgblur').addEventListener('change', saveBackgroundSettings);
+$('bgdim').addEventListener('change', saveBackgroundSettings);
+$('trainingToggle').addEventListener('change', () => setTraining($('trainingToggle').checked));
+$('trainingClear').addEventListener('click', clearTraining);
+$('sideConnections').addEventListener('click', () => {
+  $('connectionsBtn').click();
+});
 $('memadd').addEventListener('click', addMemory);
 $('memtext').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') { event.preventDefault(); addMemory(); }

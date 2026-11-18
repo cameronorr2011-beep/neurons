@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Neurons is a local-first AI harness: your memory, your models, your tools, on your machine.">
+<meta name="theme-color" content="#070b12">
+<title>Neurons — your machine, your models, your harness</title>
+<link rel="stylesheet" href="/site/assets/site.css">
+</head>
+<body>
+<div class="site-glow glow-one"></div>
+<div class="site-glow glow-two"></div>
+<header class="site-nav">
+  <a class="site-brand" href="/site/">
+    <span class="brand-mark">N</span>
+    <span>Neurons</span>
+    <em>2.3</em>
+  </a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#integrations">Integrations</a>
+    <a href="#harnesses">Harnesses</a>
+    <a href="#privacy">Privacy</a>
+  </nav>
+  <a class="nav-cta" href="/">Launch app <span>↗</span></a>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="eyebrow"><span class="pulse"></span> LOCAL-FIRST AI HARNESS</div>
+      <h1>Your machine.<br><span>Your models.</span><br>Your harness.</h1>
+      <p class="hero-lead">Neurons is a personal AI workbench that remembers you, reaches into the tools you already use, and runs on hardware you control. Bring your own keys. Keep your context.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="/">Open Neurons <span>→</span></a>
+        <a class="button button-quiet" href="#features">See what's inside</a>
+      </div>
+      <div class="hero-proof">
+        <span><b></b> local SQLite memory</span>
+        <span><b></b> 20+ integrations</span>
+        <span><b></b> no training by default</span>
+      </div>
+    </div>
+
+    <div class="hero-demo" aria-label="Neurons app preview">
+      <div class="demo-frame">
+        <div class="demo-bar"><i></i><i></i><i></i><span>neurons / local</span><b>●</b></div>
+        <div class="demo-shell">
+          <aside class="demo-side">
+            <div class="demo-logo">N <span>neurons<small>for cameron</small></span></div>
+            <div class="demo-new">+ new chat</div>
+            <div class="demo-label">CHATS</div>
+            <div class="demo-chat active"><span>Q4 launch plan</span><small>2m</small></div>
+            <div class="demo-chat"><span>Notion research sweep</span><small>1h</small></div>
+            <div class="demo-chat"><span>GitHub issue triage</span><small>3h</small></div>
+            <div class="demo-me"><span class="demo-avatar">C</span><span>memory &amp; profile<small>9 facts · sqlite</small></span></div>
+          </aside>
+          <div class="demo-main">
+            <div class="demo-top"><strong>Neurons</strong><span class="demo-status">Neuron Free · 48 models</span><span class="demo-connections">✦ 4</span></div>
+            <div class="demo-thread">
+              <div class="demo-user">What should we ship next?</div>
+              <div class="demo-agent">
+                <div class="demo-thought"><span>thinking + tools</span><small>3 steps</small></div>
+                <div class="demo-tool">→ github.search_issues <small>open · priority:p1</small></div>
+                <div class="demo-tool">→ notion.query <small>Q4 launch plan</small></div>
+                <p>Two things are blocking the release: the auth migration and the empty-state copy. I drafted the migration checklist and linked it to the launch page.</p>
+                <div class="demo-cite">source · GitHub #1842 · Notion / Q4</div>
+              </div>
+            </div>
+            <div class="demo-composer">Ask anything… <span>Send</span></div>
+            <div class="demo-foot">local-first · <b>saved</b> · terminal theme</div>
+          </div>
+        </div>
+      </div>
+      <div class="demo-float float-a"><span>✦</span> Notion connected</div>
+      <div class="demo-float float-b"><span>↻</span> memory saved</div>
+      <div class="demo-orb"></div>
+    </div>
+  </section>
+
+  <section class="logo-strip" aria-label="Works with">
+    <span>WORKS WITH THE TOOLS YOU ALREADY USE</span>
+    <div><b>GitHub</b><b>Notion</b><b>Gmail</b><b>Slack</b><b>Sigma</b><b>Linear</b><b>Outlook</b><b>Salesforce</b></div>
+  </section>
+
+  <section id="features" class="section">
+    <div class="section-head">
+      <div class="eyebrow">THE WORKBENCH</div>
+      <h2>Everything a harness should be.<br><span>Nothing it shouldn't.</span></h2>
+      <p>Not another chat box with amnesia. A persistent, tool-using environment that gets more useful the longer you use it.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="feature-card feature-wide">
+        <div class="card-kicker">01 / MEMORY</div>
+        <h3>Context that stays yours.</h3>
+        <p>Your profile, durable facts and every conversation live in a local SQLite database. Neurons injects the right context into every new chat — no re-explaining your stack, preferences or projects.</p>
+        <div class="mini-memory">
+          <div><span>cameron</span><small>operator</small></div>
+          <div><span>prefers concise answers</span><small>remembered</small></div>
+          <div><span>building local-first tools</span><small>remembered</small></div>
+        </div>
+      </article>
+      <article class="feature-card">
+        <div class="card-kicker">02 / MODELS</div>
+        <h3>One switch. Many brains.</h3>
+        <p>Route across Numes and Logfare as <strong>Neuron Free</strong>, or plug in your own OpenAI-compatible endpoint. Pick the model that fits the job.</p>
+        <div class="model-pills"><span class="free">NEURON FREE</span><span>BYOK</span><span>FALLBACK</span></div>
+      </article>
+      <article class="feature-card">
+        <div class="card-kicker">03 / INTEGRATIONS</div>
+        <h3>Your stack, connected.</h3>
+        <p>GitHub, Notion, Gmail, Slack, Outlook, Sigma, Linear, Stripe, Salesforce, Airtable and more. Tokens are brokered server-side — never exposed to the browser.</p>
+        <a class="text-link" href="#integrations">Browse integrations <span>→</span></a>
+      </article>
+      <article class="feature-card feature-accent">
+        <div class="card-kicker">04 / MAKE IT YOURS</div>
+        <h3>An interface with fingerprints.</h3>
+        <p>Five themes. A custom still or GIF backdrop. Blur and dim controls that keep the conversation readable. This is your room, not a rented one.</p>
+        <div class="theme-dots"><i></i><i></i><i></i><i></i><i></i><b>+ your background</b></div>
+      </article>
+    </div>
+  </section>
+
+  <section id="integrations" class="section integrations-section">
+    <div class="section-head split-head">
+      <div>
+        <div class="eyebrow">INTEGRATIONS</div>
+        <h2>Bring the work.<br><span>We'll bring the bridge.</span></h2>
+      </div>
+      <p>Twenty-plus services through one controlled API bridge. Connect an account once; the agent can read and act without ever seeing a password.</p>
+    </div>
+    <div class="integration-grid">
+      <div class="int-card"><span class="int-mark gh">GH</span><div><b>GitHub</b><small>repos · issues · PRs</small></div><em>connected</em></div>
+      <div class="int-card"><span class="int-mark no">NO</span><div><b>Notion</b><small>pages · databases</small></div><em>connected</em></div>
+      <div class="int-card"><span class="int-mark gm">GM</span><div><b>Gmail</b><small>search · threads</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark sl">SL</span><div><b>Slack</b><small>channels · messages</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark si">SI</span><div><b>Sigma</b><small>workbooks · datasets</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark ou">OU</span><div><b>Outlook</b><small>mail · calendar</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark li">LI</span><div><b>Linear</b><small>issues · projects</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark st">ST</span><div><b>Stripe</b><small>customers · payments</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark sf">SF</span><div><b>Salesforce</b><small>records · queries</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark ai">AI</span><div><b>Airtable</b><small>bases · records</small></div><em>connect</em></div>
+      <div class="int-card"><span class="int-mark sp">SP</span><div><b>Supabase</b><small>tables · REST</small></div><em>connect</em></div>
+      <div class="int-card int-more"><b>+ more</b><small>Jira · Asana · HubSpot · Sentry · Dropbox · Google Drive</small></div>
+    </div>
+  </section>
+
+  <section id="harnesses" class="section harness-section">
+    <div class="section-head">
+      <div class="eyebrow">HARNESSES</div>
+      <h2>Keep the agents<br><span>you already trust.</span></h2>
+      <p>Neurons can hand a focused job to a local coding agent. Each harness keeps its own provider and its own keys. Claude Code, Codex, Antigravity, Freebuff, Hermes, Aider and friends are marked training-exempt.</p>
+    </div>
+    <div class="harness-row-site">
+      <div class="harness-tile"><span>CC</span><b>Claude Code</b><small>Anthropic</small><em>ready</em></div>
+      <div class="harness-tile"><span>CX</span><b>Codex</b><small>OpenAI</small><em>ready</em></div>
+      <div class="harness-tile"><span>AG</span><b>Antigravity</b><small>Google</small><em>experimental</em></div>
+      <div class="harness-tile"><span>FB</span><b>Freebuff</b><small>Freebuff</small><em>experimental</em></div>
+      <div class="harness-tile"><span>HE</span><b>Hermes</b><small>Nous Research</small><em>ready</em></div>
+      <div class="harness-tile"><span>AI</span><b>Aider</b><small>Aider</small><em>ready</em></div>
+    </div>
+  </section>
+
+  <section id="privacy" class="section privacy-section">
+    <div class="privacy-card">
+      <div class="privacy-copy">
+        <div class="eyebrow">TRUST BY DEFAULT</div>
+        <h2>Your data is not<br>the product.</h2>
+        <p>Neurons works locally. Memory and chats stay in <code>data/neurons.db</code>. Credentials stay on the server. No analytics pixel, no silent upload, no training on your conversations unless you explicitly opt in.</p>
+        <div class="privacy-list">
+          <div><span>01</span><b>Local-first storage</b><small>SQLite on your machine</small></div>
+          <div><span>02</span><b>Server-side credentials</b><small>never shipped to the browser</small></div>
+          <div><span>03</span><b>Opt-in only</b><small>training ledger is off by default</small></div>
+          <div><span>04</span><b>Protected harnesses</b><small>Claude Code, Codex &amp; co. excluded</small></div>
+        </div>
+      </div>
+      <div class="privacy-art">
+        <div class="lock-ring"><div class="lock-core">N</div></div>
+        <div class="privacy-line l1">local memory <span>✓</span></div>
+        <div class="privacy-line l2">private keys <span>✓</span></div>
+        <div class="privacy-line l3">training off <span>✓</span></div>
+        <div class="privacy-line l4">you in control <span>✓</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section cta-section">
+    <div class="cta-card">
+      <div class="eyebrow">READY WHEN YOU ARE</div>
+      <h2>Build in your own<br><span>little universe.</span></h2>
+      <p>Start with your existing keys. Make it yours. The app runs locally at <code>127.0.0.1:8770</code>.</p>
+      <a class="button button-primary" href="/">Open Neurons <span>→</span></a>
+      <small>No account. No cloud by default. No KYC.</small>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="site-brand"><span class="brand-mark">N</span><span>Neurons</span></div>
+  <span>a local-first harness by Orr Technologies</span>
+  <a href="/site/">site</a>
+  <a href="/">app</a>
+</footer>
+<script src="/site/assets/site.js"></script>
+</body>
+</html>

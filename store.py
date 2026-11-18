@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -18,7 +19,10 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("NEURONS_DB") or (APP_ROOT / "data" / "neurons.db"))
 STYLES = ("concise", "balanced", "detailed", "direct")
-THEMES = ("graphite", "paper", "terminal")
+THEMES = ("graphite", "paper", "terminal", "aurora", "ember")
+TRAINING_EXEMPT_PROVIDERS = {
+    "anthropic", "openai", "claude-code", "codex", "antigravity", "freebuff",
+}
 
 _init_lock = threading.Lock()
 _initialized = False
@@ -51,6 +55,10 @@ def init_db(path: str | Path | None = None) -> None:
                     about TEXT NOT NULL DEFAULT '',
                     style TEXT NOT NULL DEFAULT 'balanced',
                     theme TEXT NOT NULL DEFAULT 'graphite',
+                    background TEXT NOT NULL DEFAULT '',
+                    background_blur INTEGER NOT NULL DEFAULT 0,
+                    background_dim INTEGER NOT NULL DEFAULT 42,
+                    training_opt_in INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS memories (
@@ -75,8 +83,30 @@ def init_db(path: str | Path | None = None) -> None:
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation
                     ON messages(conversation_id, id);
+                CREATE TABLE IF NOT EXISTS training_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    chars INTEGER NOT NULL DEFAULT 0,
+                    tokens INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_training_created
+                    ON training_ledger(created_at);
                 """
             )
+            # Existing databases need the newer profile columns added in place.
+            existing = {row["name"] for row in con.execute("PRAGMA table_info(profile)").fetchall()}
+            for column, ddl in (
+                ("background", "TEXT NOT NULL DEFAULT ''"),
+                ("background_blur", "INTEGER NOT NULL DEFAULT 0"),
+                ("background_dim", "INTEGER NOT NULL DEFAULT 42"),
+                ("training_opt_in", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in existing:
+                    con.execute(f"ALTER TABLE profile ADD COLUMN {column} {ddl}")
             con.execute(
                 "INSERT OR IGNORE INTO profile (id, name, about, style, theme, updated_at) "
                 "VALUES (1, '', '', 'balanced', 'graphite', ?)",
@@ -93,9 +123,18 @@ def _ready() -> None:
 def get_profile() -> dict:
     _ready()
     with _connect() as con:
-        row = con.execute("SELECT name, about, style, theme, updated_at FROM profile WHERE id = 1").fetchone()
-    return dict(row) if row else {
-        "name": "", "about": "", "style": "balanced", "theme": "graphite", "updated_at": ""
+        row = con.execute(
+            "SELECT name, about, style, theme, background, background_blur, "
+            "background_dim, training_opt_in, updated_at FROM profile WHERE id = 1"
+        ).fetchone()
+    if row:
+        result = dict(row)
+        result["training_opt_in"] = bool(result.get("training_opt_in"))
+        return result
+    return {
+        "name": "", "about": "", "style": "balanced", "theme": "graphite",
+        "background": "", "background_blur": 0, "background_dim": 42,
+        "training_opt_in": False, "updated_at": "",
     }
 
 
@@ -109,6 +148,15 @@ def update_profile(fields: dict) -> dict:
         allowed["style"] = "balanced"
     if "theme" in allowed and allowed["theme"] not in THEMES:
         allowed["theme"] = "graphite"
+    if "background" in fields and fields["background"] is not None:
+        value = str(fields["background"]).strip()
+        allowed["background"] = value if re.fullmatch(r"[A-Za-z0-9._-]{1,140}", value) else ""
+    for key, low, high in (("background_blur", 0, 30), ("background_dim", 0, 85)):
+        if key in fields and fields[key] is not None:
+            try:
+                allowed[key] = max(low, min(int(fields[key]), high))
+            except (TypeError, ValueError):
+                pass
     if allowed:
         allowed["updated_at"] = _now()
         assignments = ", ".join(f"{key} = ?" for key in allowed)
@@ -246,11 +294,22 @@ def append_message(conversation_id: str, role: str, content: str, meta: dict | N
         if not row:
             raise ValueError("conversation not found")
         now = _now()
+        meta_value = meta if isinstance(meta, dict) else {}
         cur = con.execute(
             "INSERT INTO messages (conversation_id, role, content, meta, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
-            (conversation_id, role, content, json.dumps(meta or {}), now),
+            (conversation_id, role, content, json.dumps(meta_value), now),
         )
+        profile = con.execute("SELECT training_opt_in FROM profile WHERE id = 1").fetchone()
+        provider = str(meta_value.get("provider") or "")[:80]
+        if profile and profile["training_opt_in"] and provider not in TRAINING_EXEMPT_PROVIDERS:
+            con.execute(
+                "INSERT INTO training_ledger "
+                "(conversation_id, message_id, role, chars, tokens, provider, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, cur.lastrowid, role, len(content),
+                 max(1, len(content) // 4), provider, now),
+            )
         title = row["title"]
         if role == "user" and title == "New chat":
             title = content.replace("\n", " ").strip()[:70] or "New chat"
@@ -277,6 +336,51 @@ def delete_conversation(conversation_id: str) -> bool:
     return cur.rowcount > 0
 
 
+def set_training_opt_in(enabled: bool) -> dict:
+    _ready()
+    with _connect() as con:
+        con.execute("UPDATE profile SET training_opt_in = ?, updated_at = ? WHERE id = 1",
+                    (1 if enabled else 0, _now()))
+    return get_profile()
+
+
+def training_stats() -> dict:
+    _ready()
+    with _connect() as con:
+        row = con.execute(
+            "SELECT COUNT(*) AS contributions, COALESCE(SUM(chars), 0) AS chars, "
+            "COALESCE(SUM(tokens), 0) AS tokens, COALESCE(MAX(created_at), '') AS last_at "
+            "FROM training_ledger"
+        ).fetchone()
+    profile = get_profile()
+    return {
+        "enabled": bool(profile.get("training_opt_in")),
+        "contributions": int(row["contributions"] or 0),
+        "chars": int(row["chars"] or 0),
+        "tokens": int(row["tokens"] or 0),
+        "last_at": row["last_at"] or "",
+        "exempt_providers": sorted(TRAINING_EXEMPT_PROVIDERS),
+    }
+
+
+def clear_training_ledger() -> int:
+    _ready()
+    with _connect() as con:
+        cur = con.execute("DELETE FROM training_ledger")
+    return cur.rowcount
+
+
+def export_training() -> list[dict]:
+    _ready()
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT t.id, t.conversation_id, t.role, t.chars, t.tokens, t.provider, "
+            "t.created_at, m.content FROM training_ledger t "
+            "JOIN messages m ON m.id = t.message_id ORDER BY t.id"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_state(conversation_id: str | None = None) -> dict:
     conversations = list_conversations()
     active = None
@@ -286,6 +390,7 @@ def get_state(conversation_id: str | None = None) -> dict:
         active = get_conversation(conversations[0]["id"])
     return {
         "profile": get_profile(),
+        "training": training_stats(),
         "memories": list_memories(),
         "conversations": conversations,
         "conversation": active,

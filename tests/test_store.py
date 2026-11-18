@@ -61,6 +61,34 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(state["conversation"]["id"], newer["id"])
         self.assertEqual(len(state["conversations"]), 2)
 
+    def test_background_and_training_ledger_are_local_and_opt_in(self):
+        updated = store.update_profile({
+            "background": "bg-test.gif", "background_blur": 99, "background_dim": -5,
+        })
+        self.assertEqual(updated["background"], "bg-test.gif")
+        self.assertEqual(updated["background_blur"], 30)
+        self.assertEqual(updated["background_dim"], 0)
+
+        chat = store.create_conversation("Training test")
+        store.append_message(chat["id"], "user", "A normal message")
+        self.assertEqual(store.training_stats()["contributions"], 0)
+
+        store.set_training_opt_in(True)
+        store.append_message(chat["id"], "user", "Eligible message", {"provider": "neuron-free"})
+        store.append_message(chat["id"], "assistant", "Protected answer", {"provider": "claude-code"})
+        stats = store.training_stats()
+        self.assertEqual(stats["contributions"], 1)
+        self.assertGreater(stats["tokens"], 0)
+        exported = store.export_training()
+        self.assertEqual(len(exported), 1)
+        self.assertIn("Eligible message", exported[0]["content"])
+
+        store.set_training_opt_in(False)
+        store.append_message(chat["id"], "user", "Not counted while off")
+        self.assertEqual(store.training_stats()["contributions"], 1)
+        self.assertEqual(store.clear_training_ledger(), 1)
+        self.assertEqual(store.training_stats()["contributions"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
